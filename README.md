@@ -126,11 +126,10 @@ Specifically,
 Offline evaluation only support the VQA 2.0 *val* split, which is considered in this work. If you want to evaluate on the VQA 2.0 *test-dev* or *test-std* split, you can upload the obtained result json file to [Eval AI](https://evalai.cloudcv.org/web/challenges/challenge-page/163/overview) to evaluate the scores on *test-dev* and *test-std* splits.
 
 ## TODO
-- [x] implement the designed benchmark: task-oriented semantic communication works (T-DeepSC) for the considered tasks, including image(cls/recons), text(cls/recons) under analog transmission.
-- [x] implement the designed benchmark: TDeepSC for VQA and MSA under analog transmission.
-- [x] implement the digital transmission: vector quantization (VQ) and uniform scalar quantization (SQ). 
-- [x] implement the 16QAM and QPSK modulations.
-- [X] the basic version of the unified semantic communication (U-DeepSC).
-- [x] dataset preparation.
-- [x] feature selection-based UDeepSC.
-- [x] packages requirement.
+- [ ] Let udeepsc can be run.
+	- [ ] Implement Bert model for text-only and multimodal tasks.
+- [ ] Modify udeepsc to non-orthogonal scheme.
+	- [ ] Let features from different sources superimposed in transmission.
+	- [ ] Check concatnate features shape at receiver.
+	- [ ] Implement successive interference cancellation (SIC) (for signal detection).
+
