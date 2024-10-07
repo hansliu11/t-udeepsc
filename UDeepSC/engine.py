@@ -167,6 +167,10 @@ def evaluate_vqa(ta_perform: str, net: torch.nn.Module, dataloader: Iterable,
 def train_class_batch_uni(ta_perform, model, sel_batch, targets, criterion):
     loss = 0
     imgs, texts, speechs = sel_batch
+    """
+    Bert model input parameters: input_ids, attention_mask, token_type_ids...
+    If use pretrained bert on huggingface, there is no "ta_perform" parameter.
+    """
     if ta_perform.startswith('imgc'):
         outputs = model(img=imgs,ta_perform=ta_perform)
         loss = criterion[ta_perform](outputs, targets) * 1  
@@ -179,6 +183,7 @@ def train_class_batch_uni(ta_perform, model, sel_batch, targets, criterion):
         loss = criterion[ta_perform](outputs, targets) * 0.6
     elif ta_perform.startswith('textr'):
         outputs = model(text=texts, ta_perform=ta_perform) * 1
+        # outputs = model(text=texts) * 1
         targets = targets[:,1:]
         for i in range(outputs.shape[1]):
             loss += criterion[ta_perform](outputs[:,i], targets[:,i])*5

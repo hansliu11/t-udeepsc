@@ -492,7 +492,125 @@ class SPTEncoder(nn.Module):
     def forward(self, x, ta_perform=None):
         x = self.forward_features(x, ta_perform)
         return x
+
+
+
+class BertEncoder(nn.Module):
+    def __init__(self,  vocab_size=30522, embed_dim=512, num_hidden_layers=4, num_heads=8, intermediate_size=2048, max_position_embedd=512, config=None):
+        super().__init__()
+        self.num_features = self.embed_dim = embed_dim
+        
+        if config is None:
+            config = BertConfig(
+                hidden_size=embed_dim,
+                num_hidden_layers=4,
+                num_attention_heads=8,
+                intermediate_size=2048,
+                hidden_act="gelu",
+                hidden_dropout_prob=0.1,
+                attention_probs_dropout_prob=0.1,
+                max_position_embeddings=512,
+                type_vocab_size=2,
+                initializer_range=0.02,
+                layer_norm_eps=1e-12,
+                pad_token_id=0,
+                vocab_size=30522,
+            )
+        
+        # self.bert_ckpt = f"/prajjwal1/bert-{mode}"
+        # self.bert = BertModel.from_pretrained(self.bert_ckpt)
+        
+        # Embeddings
+        self.word_embedding = nn.Embedding(vocab_size, embed_dim)
+        self.position_embedding = nn.Embedding(max_position_embedd, embed_dim)
+        self.token_type_embedding = nn.Embedding(2, embed_dim)
+        self.layer_norm = nn.LayerNorm(embed_dim)
+        self.dropout = nn.Dropout(0.1)
+        
+        self.cls_token = nn.ParameterDict({
+            'vqa': nn.Parameter(torch.zeros(1, 1, embed_dim)),
+            'msa': nn.Parameter(torch.zeros(1, 1, embed_dim)),
+            'textr': nn.Parameter(torch.zeros(1, 1, embed_dim)),
+            'textc': nn.Parameter(torch.zeros(1, 1, embed_dim)),
+        })
+        
+        # Task embeddings
+        self.task_embedd = nn.ParameterDict({
+            'vqa': nn.Parameter(torch.zeros(1, 1, embed_dim)),
+            'msa': nn.Parameter(torch.zeros(1, 1, embed_dim)),
+            'textr': nn.Parameter(torch.zeros(1, 1, embed_dim)),
+            'textc': nn.Parameter(torch.zeros(1, 1, embed_dim)),
+        })
+        
+        # Transformer layers
+        self.encoder_layers = nn.ModuleList([
+            nn.TransformerEncoderLayer(embed_dim, num_heads, intermediate_size)
+            for _ in range(num_hidden_layers)
+        ])
     
+        self.tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+        
+        for key in self.cls_token.keys():
+            trunc_normal_(self.cls_token[key], std=.02)
+            trunc_normal_(self.task_embedd[key], std=.02)
+        
+        self.apply(self._init_weights)
+    def _init_weights(self, m):
+        if isinstance(m, nn.Linear):
+            nn.init.xavier_uniform_(m.weight)
+            if isinstance(m, nn.Linear) and m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.LayerNorm):
+            nn.init.constant_(m.bias, 0)
+            nn.init.constant_(m.weight, 1.0)
+
+    def get_num_layers(self):
+        return len(self.blocks)
+              
+    def forward_features(self, text, ta_perform=None):
+        # Tokenize the input text
+        encoded_input = self.tokenizer(text, return_tensors='pt', padding=True, truncation=True, max_length=512)
+        input_ids = encoded_input['input_ids'].to(self.bert.device)
+        attention_mask = encoded_input['attention_mask'].to(self.bert.device)
+        
+         # Create position IDs
+        position_ids = torch.arange(input_ids.size(1), dtype=torch.long, device=input_ids.device)
+        position_ids = position_ids.unsqueeze(0).expand_as(input_ids)
+        
+        # if ta_perform.startswith('vqa'):
+            
+        # elif ta_perform.startswith('msa'):
+            
+        # elif ta_perform.startswith('text'):
+                
+        # else:
+        #     raise ValueError(f"Task {ta_perform} not supported")
+        
+        # Get embeddings
+        word_embeds = self.word_embedding(input_ids)
+        position_embeds = self.position_embedding(position_ids)
+        token_type_ids = torch.zeros_like(input_ids)
+        token_type_embeds = self.token_type_embedding(token_type_ids)
+        
+        # Combine embeddings
+        embeds = word_embeds + position_embeds + token_type_embeds
+        
+        batch_size = embeds.shape[0]
+        cls_tokens = self.cls_token[ta_perform].expand(batch_size, -1, -1).to(embeds.device) 
+        task_embedd = self.task_embedd[ta_perform].expand(batch_size, -1, -1).to(embeds.device)
+        embeds = torch.cat((cls_tokens, embeds, task_embedd), dim=1)
+        embeds = self.layer_norm(embeds)
+        embeds = self.dropout(embeds)
+        
+        for layer in self.encoder_layers:
+            embeds = layer(embeds)
+        
+        embeds = self.layer_norm(embeds)
+        
+        return embeds
+        
+    def forward(self, text, ta_perform):
+        return self.forward_features(text, ta_perform)
 
 
 class VectorQuantizer(nn.Module):

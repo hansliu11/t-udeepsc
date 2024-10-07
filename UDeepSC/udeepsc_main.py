@@ -14,6 +14,9 @@ from utils import NativeScalerWithGradNormCount as NativeScaler
 from utils import get_model, sel_criterion_train, sel_criterion_test, load_checkpoint
 from datasets import build_dataset_train, build_dataset_test, BatchSchedulerSampler, collate_fn, build_dataloader
 
+## 0 -> 2 1 -> 1 2 -> 0 3 -> 3
+# os.environ['CUDA_VISIBLE_DEVICES'] = '1'
+
 ############################################################
 def seed_initial(seed=0):
     seed += utils.get_rank()
@@ -48,8 +51,8 @@ def main(args):
     ############## Get the data and dataloader
     
     # ta_sel = ['textr','textc']
-    ta_sel = ['msa', 'textr']
-    # ta_sel = ['imgr']
+    # ta_sel = ['msa', 'textr']
+    ta_sel = ['imgr', 'textr']
     trainset_group = build_dataset_train(is_train=True, ta_sel=ta_sel, args=args)
     trainloader_group= build_dataloader(ta_sel,trainset_group, args=args)
 

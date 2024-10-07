@@ -1,4 +1,5 @@
-CUDA_VISIBLE_DEVICES=3  python3  udeepsc_main.py \
+# CUDA_VISIBLE_DEVICES=3  
+python3  udeepsc_main.py \
     --model  UDeepSC_new_model  \
     --output_dir output   \
     --batch_size 16 \
