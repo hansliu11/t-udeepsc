@@ -183,8 +183,7 @@ def train_class_batch_uni(ta_perform, model, sel_batch, targets, criterion):
         loss = criterion[ta_perform](outputs, targets) * 0.6
     elif ta_perform.startswith('textr'):
         outputs = model(text=texts, ta_perform=ta_perform) * 1
-        # outputs = model(text=texts) * 1
-        targets = targets[:,1:]
+        # targets = targets[:,1:]
         for i in range(outputs.shape[1]):
             loss += criterion[ta_perform](outputs[:,i], targets[:,i])*5
     elif ta_perform.startswith('vqa'):

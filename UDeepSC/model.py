@@ -216,7 +216,7 @@ class UDeepSC_M2(nn.Module):
         # Get state_dict of pretrained bert
         pretrained_state_dict = text_encoder_pretrained.state_dict()
         
-        self.text_encoder = BertEncoder(embed_dim=text_embed_dim)
+        self.text_encoder = BertTextEncoder(embed_dim=text_embed_dim)
         # Load pretrained state_dict
         self.text_encoder.load_state_dict(pretrained_state_dict, strict=False)
         
@@ -313,7 +313,8 @@ class UDeepSC_M2(nn.Module):
         else:
             noise_std = torch.FloatTensor([1]) * 10**(-test_snr/20) 
         if text is not None:
-            x_text = self.text_encoder(ta_perform, text, return_dict=False)[0]
+            # x_text = self.text_encoder(ta_perform, text, return_dict=False)[0]
+            x_text = self.text_encoder(text, ta_perform)[0]
             # x_text = self.LN(x_text)
             if ta_perform.startswith('textc'):
                 x_text = x_text[:,0,:].unsqueeze(1)

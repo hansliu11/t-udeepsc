@@ -7,6 +7,8 @@ import torch
 import torch.nn as nn
 from channel import *
 from functools import partial
+from transformers import BertConfig, BertModel, BertTokenizer
+from transformers.models.bert.modeling_bert import BertEncoder, BertPooler
 import torch.nn.functional as F
 
 
@@ -495,7 +497,7 @@ class SPTEncoder(nn.Module):
 
 
 
-class BertEncoder(nn.Module):
+class BertTextEncoder(nn.Module):
     def __init__(self,  vocab_size=30522, embed_dim=512, num_hidden_layers=4, num_heads=8, intermediate_size=2048, max_position_embedd=512, config=None):
         super().__init__()
         self.num_features = self.embed_dim = embed_dim
@@ -542,13 +544,10 @@ class BertEncoder(nn.Module):
             'textc': nn.Parameter(torch.zeros(1, 1, embed_dim)),
         })
         
-        # Transformer layers
-        self.encoder_layers = nn.ModuleList([
-            nn.TransformerEncoderLayer(embed_dim, num_heads, intermediate_size)
-            for _ in range(num_hidden_layers)
-        ])
+        # Bert layers
+        self.encoder = BertEncoder(config)
     
-        self.tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+        self.pooler = BertPooler(config)
         
         for key in self.cls_token.keys():
             trunc_normal_(self.cls_token[key], std=.02)
@@ -568,14 +567,19 @@ class BertEncoder(nn.Module):
         return len(self.blocks)
               
     def forward_features(self, text, ta_perform=None):
-        # Tokenize the input text
-        encoded_input = self.tokenizer(text, return_tensors='pt', padding=True, truncation=True, max_length=512)
-        input_ids = encoded_input['input_ids'].to(self.bert.device)
-        attention_mask = encoded_input['attention_mask'].to(self.bert.device)
+        """
+            Args:
+                inputs: a tensor with shape (batch_size, seq_len)
+            
+            Returns:
+                a tensor with shape (batch_size, seq_len + 2, embed_dim)
+
+        """
+        # Text has been tokenized first
         
-         # Create position IDs
-        position_ids = torch.arange(input_ids.size(1), dtype=torch.long, device=input_ids.device)
-        position_ids = position_ids.unsqueeze(0).expand_as(input_ids)
+        # Create position IDs
+        position_ids = torch.arange(text.size(1), dtype=torch.long, device=text.device)
+        position_ids = position_ids.unsqueeze(0).expand_as(text)
         
         # if ta_perform.startswith('vqa'):
             
@@ -587,27 +591,26 @@ class BertEncoder(nn.Module):
         #     raise ValueError(f"Task {ta_perform} not supported")
         
         # Get embeddings
-        word_embeds = self.word_embedding(input_ids)
+        word_embeds = self.word_embedding(text)
         position_embeds = self.position_embedding(position_ids)
-        token_type_ids = torch.zeros_like(input_ids)
+        token_type_ids = torch.zeros_like(text)
         token_type_embeds = self.token_type_embedding(token_type_ids)
         
         # Combine embeddings
         embeds = word_embeds + position_embeds + token_type_embeds
+        embeds = self.layer_norm(embeds)
+        embeds = self.dropout(embeds)
         
         batch_size = embeds.shape[0]
         cls_tokens = self.cls_token[ta_perform].expand(batch_size, -1, -1).to(embeds.device) 
         task_embedd = self.task_embedd[ta_perform].expand(batch_size, -1, -1).to(embeds.device)
         embeds = torch.cat((cls_tokens, embeds, task_embedd), dim=1)
-        embeds = self.layer_norm(embeds)
-        embeds = self.dropout(embeds)
         
-        for layer in self.encoder_layers:
-            embeds = layer(embeds)
-        
-        embeds = self.layer_norm(embeds)
-        
-        return embeds
+        encoder_outputs = self.encoder(embeds)
+        sequence_output = encoder_outputs[0]
+        pooled_output = self.pooler(sequence_output) if self.pooler is not None else None
+
+        return (sequence_output, pooled_output) + encoder_outputs[1:]
         
     def forward(self, text, ta_perform):
         return self.forward_features(text, ta_perform)
