@@ -50,8 +50,9 @@ def main(args):
     print("------------------------------------------------------")
     ############## Get the data and dataloader
     
-    # ta_sel = ['textr','textc']
-    # ta_sel = ['msa', 'textr']
+    '''
+        ta_sel: select the task for training
+    '''
     ta_sel = ['imgr', 'textr']
     trainset_group = build_dataset_train(is_train=True, ta_sel=ta_sel, args=args)
     trainloader_group= build_dataloader(ta_sel,trainset_group, args=args)
