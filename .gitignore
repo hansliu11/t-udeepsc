@@ -1,4 +1,5 @@
 data
 output
+log
 *.tz
 *.pyc

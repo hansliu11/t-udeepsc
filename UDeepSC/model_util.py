@@ -402,6 +402,9 @@ class ViTEncoder(nn.Module):
         return {'pos_embed', 'cls_token'}
 
     def forward_features(self, x, ta_perform):
+        '''
+            input: (batch, channel, img_w, img_h)
+        '''
         if ta_perform.startswith('vqa'):
             x = self.linear_embed_vqa(x)
             batch_size = x.shape[0]
@@ -409,7 +412,6 @@ class ViTEncoder(nn.Module):
             task_embedd = self.task_embedd[ta_perform].expand(batch_size, -1, -1).to(x.device)
             x = torch.cat((cls_tokens, x, task_embedd), dim=1)
         elif ta_perform.startswith('msa'):
-        
             x = self.linear_embed_msa(x)
             batch_size = x.shape[0]
             cls_tokens = self.cls_token[ta_perform].expand(batch_size, -1, -1).to(x.device)

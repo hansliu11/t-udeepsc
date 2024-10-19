@@ -181,10 +181,11 @@ class UDeepSC_M1(nn.Module):
             return x
 
 
-
-## include more details (e.g. symbol number) for each task
-## extract transmit part as a function
 class UDeepSC_M2(nn.Module):
+    '''
+        1. include more details (e.g. symbol number) for each task
+        2. extract transmit part as a function
+    '''
     def __init__(self,mode='tiny',
                  img_size=224, patch_size=16, encoder_in_chans=3, encoder_num_classes=0, 
                  img_embed_dim=384, text_embed_dim=384, speech_embed_dim=128, img_encoder_depth=4, 

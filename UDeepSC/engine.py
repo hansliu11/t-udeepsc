@@ -94,7 +94,7 @@ def evaluate(ta_perform: str, net: torch.nn.Module, dataloader: Iterable,
             for batch_idx, (texts, targets) in enumerate(dataloader):
                 loss = 0
                 texts, targets = texts.to(device), targets.to(device)
-                targets = targets[:,1:]
+                # targets = targets[:,1:]
                 outputs = net(text=texts, ta_perform=ta_perform)
                 batch_size = targets.size(0)
                 preds = torch.zeros_like(targets)
