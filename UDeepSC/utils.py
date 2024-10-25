@@ -9,6 +9,7 @@ import torch
 import datetime
 import numpy as np
 import torch.distributed as dist
+import colorama
 
 from pathlib import Path
 from torch import inf
@@ -244,6 +245,22 @@ def load_state_dict(model, state_dict, prefix='', ignore_missing="relative_posit
             model.__class__.__name__, ignore_missing_keys))
     if len(error_msgs) > 0:
         print('\n'.join(error_msgs))
+def toColor(text: str, color: str, other: str='') -> str:
+    """
+        Make a colored (ANSI) string.
+        
+        Args:
+            text: your stuff. Can be anything, will be str()-ed
+            color: the color of your text, must be colorama supported. 
+                   e.g. 'yellow', 'cyan'
+            other: other attribute that you wanna add to the string
+                   e.g. colorama.Style.BRIGHT
+        
+        Returns:
+            An ANSI-colored string.
+    """
+    return f'{getattr(colorama.Fore, color.upper())}{other}{text}{colorama.Style.RESET_ALL}'
+
 
 class NativeScalerWithGradNormCount:
     state_dict_key = "amp_scaler"

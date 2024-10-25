@@ -8,7 +8,7 @@ import torch.nn.functional as F
 from channel import *
 from model_util import *
 from functools import partial
-from trans_deocer import Decoder
+from trans_decoder import Decoder
 from timm.models.registry import register_model
 from timm.models.layers import trunc_normal_ as __call_trunc_normal_
 from transformers import BertForSequenceClassification, BertModel
