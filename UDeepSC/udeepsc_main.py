@@ -5,6 +5,7 @@ import torch
 import utils
 import model   
 import torch.backends.cudnn as cudnn
+import wandb
 
 from engine import *
 from pathlib import Path 
@@ -18,6 +19,16 @@ from datasets import build_dataset_train, build_dataset_test, BatchSchedulerSamp
 # os.environ['CUDA_VISIBLE_DEVICES'] = '1'
 
 ############################################################
+def wandbConfig_initial(args):
+    config = wandb.config
+    config.batch_size = args.batch_size  
+    config.epochs = args.epochs  
+    config.lr = args.lr  
+    config.use_cuda = (True if (torch.cuda.is_available() and args.device == 'cuda') else False)  
+    config.seed = args.seed  
+    config.log_interval = args.log_interval
+
+
 def seed_initial(seed=0):
     seed += utils.get_rank()
     np.random.seed(seed)
@@ -32,6 +43,10 @@ def main(args):
     utils.init_distributed_mode(args)
     device = torch.device(args.device)
     seed_initial(seed=args.seed)
+    
+    ### wanb init
+    wandb.init(project="udeepsc", name="textr_test")
+    wandbConfig_initial(args)
     ####################################### Get the model
     model = get_model(args)
     if args.resume:
@@ -126,6 +141,8 @@ def main(args):
         exit(0)
 
     ################################## Start Training the T-DeepSC
+
+    wandb.watch(model, criterion=criterion_train, log_freq=args.log_interval)
     print(f"Start training for {args.epochs} epochs")
     max_accuracy = 0.0
     start_time = time.time()
@@ -139,7 +156,9 @@ def main(args):
                 ta_sel, args.clip_grad,  start_steps=epoch * num_training_steps_per_epoch,
                 lr_schedule_values=lr_schedule_values, wd_schedule_values=wd_schedule_values, 
                 update_freq=args.update_freq)
-   
+
+        ## logging training using wandb
+        train_log(epoch, train_stats)
         
         inter_time = time.time() - start_time
         inter_time_str = str(datetime.timedelta(seconds=int(inter_time)))

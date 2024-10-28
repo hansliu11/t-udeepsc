@@ -102,13 +102,13 @@ def evaluate(ta_perform: str, net: torch.nn.Module, dataloader: Iterable,
                     # print(targets.shape)
                     # print(outputs.shape)
                     loss += criterion(outputs, targets[:,])
-                    
-
                     preds[:,i] = outputs[:,i].max(-1)[-1] 
+
                 preds = tokens2sentence(preds)
                 targets = tokens2sentence(targets)
                 for pred, target in zip(preds, targets):
-                    # print(pred,target)
+                    print(f'Pred: {pred}')
+                    print(f'Tar: {target}')
                     result.append((pred, target))
         
                 bleu_meter.update(computebleu(preds, targets)/batch_size, n=batch_size)
@@ -212,6 +212,10 @@ def train_epoch_uni(model: torch.nn.Module, criterion: dict,
                 device: torch.device, epoch: int, loss_scaler, ta_sel, max_norm: float=0,
                 start_steps=None,lr_schedule_values=None, wd_schedule_values=None, 
                 update_freq=None, print_freq=10):
+    '''
+        Return:
+            a dict of average loss for each task in 'ta_sel'
+    '''
     model.train(True)                                                         
     acc_meter_dict, loss_meter_dict, psnr_meter = meter(ta_sel)
 
@@ -225,6 +229,8 @@ def train_epoch_uni(model: torch.nn.Module, criterion: dict,
     num_tasks = len(data_dict)
     data_tuple = [data_loader for data_loader in data_dict.values()]
     # data_tuple[2],data_tuple[3],data_tuple[4]
+    train_stat = {}
+        
     for data_batch in zip(data_tuple[0], data_tuple[1]):    
         step = data_iter_step // update_freq
         it = start_steps + step  
@@ -331,8 +337,9 @@ def train_epoch_uni(model: torch.nn.Module, criterion: dict,
                 print('Epoch:[%d] [%s] %d/%d: [loss: %.3f] [lr: %.3e]' 
                     %(epoch, ta, batch_size*data_iter_step, 5000,
                         loss_meter_dict[ta].avg,  max_lr))
-              
-    train_stat = None
+            
+    train_stat[ta] = loss_meter_dict[ta].avg  
+
 
     return train_stat 
 

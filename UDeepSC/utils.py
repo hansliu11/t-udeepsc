@@ -10,6 +10,7 @@ import datetime
 import numpy as np
 import torch.distributed as dist
 import colorama
+import wandb
 
 from pathlib import Path
 from torch import inf
@@ -18,7 +19,7 @@ from timm.utils import get_state_dict
 from timm.models import create_model
 from collections import OrderedDict
 from pytorch_msssim import ms_ssim, ssim
-from collections import defaultdict, deque
+import matplotlib.pyplot as plt
 from timm.loss import LabelSmoothingCrossEntropy
 from sklearn.metrics import confusion_matrix
 from sklearn.metrics import precision_recall_fscore_support
@@ -34,11 +35,12 @@ def sel_criterion_train(args, ta_sel, device):
             criterion = LabelSmoothingCrossEntropy(smoothing=args.smoothing).to(device)
             print("criterion for %s classification = %s" % (args.ta_perform,str(criterion)))
         elif ta.startswith('imgr'):
-            criterion = torch.nn.MSELoss()
+            criterion = torch.nn.MSELoss().to(device)
             print("criterion for %s Reconstruction = %s" % (args.ta_perform,str(criterion)))
         elif ta.startswith('textr'):
             criterion = LabelSmoothingCrossEntropy(smoothing=args.smoothing).to(device)
-            print("criterion for %s classification = %s" % (args.ta_perform,str(criterion)))
+            # criterion = torch.nn.MSELoss().to(device)
+            print("criterion for %s Reconstruction = %s" % (args.ta_perform,str(criterion)))
         elif ta.startswith('vqa'):
             criterion = torch.nn.BCELoss(reduction='sum').to(device)
             print("criterion for %s classification = %s" % (args.ta_perform,str(criterion)))
@@ -61,7 +63,7 @@ def sel_criterion_test(args,device):
         print("criterion for %s Reconstruction = %s" % (args.ta_perform,str(criterion)))
     elif args.ta_perform.startswith('textr'):
         criterion = LabelSmoothingCrossEntropy(smoothing=args.smoothing).to(device)
-        print("criterion for %s classification = %s" % (args.ta_perform,str(criterion)))
+        print("criterion for %s Reconstruction = %s" % (args.ta_perform,str(criterion)))
     elif args.ta_perform.startswith('vqa'):
         criterion = torch.nn.BCELoss(reduction='sum').to(device)
         print("criterion for %s classification = %s" % (args.ta_perform,str(criterion)))
@@ -245,6 +247,25 @@ def load_state_dict(model, state_dict, prefix='', ignore_missing="relative_posit
             model.__class__.__name__, ignore_missing_keys))
     if len(error_msgs) > 0:
         print('\n'.join(error_msgs))
+
+def imshow(img: torch.Tensor):
+    """
+        img: normalzied to 0.5
+    """
+    return # on workstation, plt.show() might deadlock due to the workstation
+           # actually having a desktop environment you can't access
+    img = img / 2 + 0.5     # unnormalize
+    npimg = img.numpy()
+    plt.imshow(np.transpose(npimg, (1, 2, 0)))
+    plt.show()
+    
+def train_log(epoch, loss_all:dict):
+    log_data = {"epoch": epoch}
+    for ta, loss in loss_all.items():
+        log_data[f"{ta}/loss"] = loss
+        # log_data[f"{ta}/accuracy"] = acc
+    wandb.log(log_data)
+    
 def toColor(text: str, color: str, other: str='') -> str:
     """
         Make a colored (ANSI) string.
@@ -278,8 +299,8 @@ class NativeScalerWithGradNormCount:
             else:
                 self._scaler.unscale_(optimizer)
                 norm = get_grad_norm_(parameters)
-            self._scaler.step(optimizer)
-            self._scaler.update()
+            self._scaler.step(optimizer) ## update parameters
+            self._scaler.update()        ## update scaler state
         else:
             norm = None
         return norm

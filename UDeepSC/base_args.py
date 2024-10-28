@@ -93,6 +93,7 @@ def get_args():
 
     parser.add_argument('--ta_perform', default='', choices=['imgc','textc', 'vqa', 'imgr', 'textr', 'msa'],
                         type=str, help='Eval Data')
+    parser.add_argument('--log_interval', default=10, type=int, help='logging interval for wandb')
 
 
     return parser.parse_args()
