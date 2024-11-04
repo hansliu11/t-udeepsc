@@ -68,6 +68,7 @@ def main(args):
     '''
         ta_sel: select the task for training
     '''
+    # ta_sel = ['imgr', 'textr', 'textc']
     ta_sel = ['imgr', 'textr']
     trainset_group = build_dataset_train(is_train=True, ta_sel=ta_sel, args=args)
     trainloader_group= build_dataloader(ta_sel,trainset_group, args=args)
@@ -183,6 +184,8 @@ def main(args):
                 test_stats = evaluate_msa(ta_perform=args.ta_perform, 
                                     net=model, dataloader=dataloader_val, 
                                     device=device, criterion=criterion_test)
+            validation_log(args.ta_perform, epoch ,test_stats)
+            
             if args.ta_perform.startswith('imgc') or args.ta_perform.startswith('textc'):
                 print(f"Accuracy of the network on the {len(valset)} test images: {test_stats['acc']*100:.3f}")
             elif args.ta_perform.startswith('imgr'):

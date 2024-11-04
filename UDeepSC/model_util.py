@@ -180,6 +180,44 @@ class PatchEmbed(nn.Module):
             f"Input image size ({H}*{W}) doesn't match model ({self.img_size[0]}*{self.img_size[1]})."
         x = self.proj(x).flatten(2).transpose(1, 2)
         return x
+class BertEmbed(nn.Module):
+    """Construct the embeddings from word, position and token_type embeddings.
+    """
+    def __init__(self, vocab_size=30522, embed_dim=512, max_position_embedd=512, config=None):
+        super().__init__()
+
+        # Embeddings
+        self.word_embeddings = nn.Embedding(vocab_size, embed_dim)
+        self.position_embeddings = nn.Embedding(max_position_embedd, embed_dim)
+        self.token_type_embeddings = nn.Embedding(2, embed_dim)
+        self.layer_norm = nn.LayerNorm(embed_dim)
+        self.dropout = nn.Dropout(0.1)
+
+    def forward(self, text):
+        """
+            Args:
+                inputs: a tensor with shape (batch_size, seq_len)
+
+            Returns:
+                a tensor with shape (batch_size, embed_dim, seq_len)
+
+        """
+        # Create position IDs
+        position_ids = torch.arange(text.size(1), dtype=torch.long, device=text.device)
+        position_ids = position_ids.unsqueeze(0).expand_as(text)
+
+         # Get embeddings
+        word_embeds = self.word_embeddings(text)
+        position_embeds = self.position_embeddings(position_ids)
+        token_type_ids = torch.zeros_like(text)
+        token_type_embeds = self.token_type_embeddings(token_type_ids)
+
+        # Combine embeddings
+        embeds = word_embeds + position_embeds + token_type_embeds
+        embeds = self.layer_norm(embeds)
+        embeds = self.dropout(embeds)
+        
+        return embeds
     
 def get_sinusoid_encoding_table(n_position, d_hid): 
     ''' Sinusoid position encoding table ''' 
@@ -525,11 +563,7 @@ class BertTextEncoder(nn.Module):
         # self.bert = BertModel.from_pretrained(self.bert_ckpt)
         
         # Embeddings
-        self.word_embedding = nn.Embedding(vocab_size, embed_dim)
-        self.position_embedding = nn.Embedding(max_position_embedd, embed_dim)
-        self.token_type_embedding = nn.Embedding(2, embed_dim)
-        self.layer_norm = nn.LayerNorm(embed_dim)
-        self.dropout = nn.Dropout(0.1)
+        self.embeddings = BertEmbed(vocab_size, embed_dim, max_position_embedd, config)
         
         self.cls_token = nn.ParameterDict({
             'vqa': nn.Parameter(torch.zeros(1, 1, embed_dim)),
@@ -580,8 +614,8 @@ class BertTextEncoder(nn.Module):
         # Text has been tokenized first
         
         # Create position IDs
-        position_ids = torch.arange(text.size(1), dtype=torch.long, device=text.device)
-        position_ids = position_ids.unsqueeze(0).expand_as(text)
+        # position_ids = torch.arange(text.size(1), dtype=torch.long, device=text.device)
+        # position_ids = position_ids.unsqueeze(0).expand_as(text)
         
         # if ta_perform.startswith('vqa'):
             
@@ -592,21 +626,23 @@ class BertTextEncoder(nn.Module):
         # else:
         #     raise ValueError(f"Task {ta_perform} not supported")
         
-        # Get embeddings
-        word_embeds = self.word_embedding(text)
-        position_embeds = self.position_embedding(position_ids)
-        token_type_ids = torch.zeros_like(text)
-        token_type_embeds = self.token_type_embedding(token_type_ids)
+        # # Get embeddings
+        # word_embeds = self.word_embedding(text)
+        # position_embeds = self.position_embedding(position_ids)
+        # token_type_ids = torch.zeros_like(text)
+        # token_type_embeds = self.token_type_embedding(token_type_ids)
         
-        # Combine embeddings
-        embeds = word_embeds + position_embeds + token_type_embeds
-        embeds = self.layer_norm(embeds)
-        embeds = self.dropout(embeds)
+        # # Combine embeddings
+        # embeds = word_embeds + position_embeds + token_type_embeds
+        # embeds = self.layer_norm(embeds)
+        # embeds = self.dropout(embeds)
+        
+        embeds = self.embeddings(text)
         
         batch_size = embeds.shape[0]
-        cls_tokens = self.cls_token[ta_perform].expand(batch_size, -1, -1).to(embeds.device) 
+        # cls_tokens = self.cls_token[ta_perform].expand(batch_size, -1, -1).to(embeds.device) 
         task_embedd = self.task_embedd[ta_perform].expand(batch_size, -1, -1).to(embeds.device)
-        embeds = torch.cat((cls_tokens, embeds, task_embedd), dim=1)
+        embeds = torch.cat((embeds, task_embedd), dim=1)
         
         encoder_outputs = self.encoder(embeds)
         sequence_output = encoder_outputs[0]

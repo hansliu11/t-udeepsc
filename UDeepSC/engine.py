@@ -94,7 +94,7 @@ def evaluate(ta_perform: str, net: torch.nn.Module, dataloader: Iterable,
             for batch_idx, (texts, targets) in enumerate(dataloader):
                 loss = 0
                 texts, targets = texts.to(device), targets.to(device)
-                # targets = targets[:,1:]
+                targets = targets[:,1:]
                 outputs = net(text=texts, ta_perform=ta_perform)
                 batch_size = targets.size(0)
                 preds = torch.zeros_like(targets)
@@ -107,8 +107,8 @@ def evaluate(ta_perform: str, net: torch.nn.Module, dataloader: Iterable,
                 preds = tokens2sentence(preds)
                 targets = tokens2sentence(targets)
                 for pred, target in zip(preds, targets):
-                    print(f'Pred: {pred}')
-                    print(f'Tar: {target}')
+                    # print(f'Pred: {pred}')
+                    # print(f'Tar: {target}')
                     result.append((pred, target))
         
                 bleu_meter.update(computebleu(preds, targets)/batch_size, n=batch_size)
@@ -183,7 +183,7 @@ def train_class_batch_uni(ta_perform, model, sel_batch, targets, criterion):
         loss = criterion[ta_perform](outputs, targets) * 0.6
     elif ta_perform.startswith('textr'):
         outputs = model(text=texts, ta_perform=ta_perform) * 1
-        # targets = targets[:,1:]
+        targets = targets[:,1:]
         for i in range(outputs.shape[1]):
             loss += criterion[ta_perform](outputs[:,i], targets[:,i])*5
     elif ta_perform.startswith('vqa'):
@@ -231,7 +231,7 @@ def train_epoch_uni(model: torch.nn.Module, criterion: dict,
     # data_tuple[2],data_tuple[3],data_tuple[4]
     train_stat = {}
         
-    for data_batch in zip(data_tuple[0], data_tuple[1]):    
+    for data_batch in zip(*data_tuple):    
         step = data_iter_step // update_freq
         it = start_steps + step  
         if lr_schedule_values is not None or wd_schedule_values is not None and data_iter_step % update_freq == 0:

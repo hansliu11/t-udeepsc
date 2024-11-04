@@ -4,6 +4,7 @@ import csv
 import math
 import time
 import json
+from typing import Iterable
 import thop
 import torch
 import datetime
@@ -38,8 +39,8 @@ def sel_criterion_train(args, ta_sel, device):
             criterion = torch.nn.MSELoss().to(device)
             print("criterion for %s Reconstruction = %s" % (args.ta_perform,str(criterion)))
         elif ta.startswith('textr'):
-            criterion = LabelSmoothingCrossEntropy(smoothing=args.smoothing).to(device)
-            # criterion = torch.nn.MSELoss().to(device)
+            # criterion = LabelSmoothingCrossEntropy(smoothing=args.smoothing).to(device)
+            criterion = torch.nn.CrossEntropyLoss().to(device)
             print("criterion for %s Reconstruction = %s" % (args.ta_perform,str(criterion)))
         elif ta.startswith('vqa'):
             criterion = torch.nn.BCELoss(reduction='sum').to(device)
@@ -63,6 +64,7 @@ def sel_criterion_test(args,device):
         print("criterion for %s Reconstruction = %s" % (args.ta_perform,str(criterion)))
     elif args.ta_perform.startswith('textr'):
         criterion = LabelSmoothingCrossEntropy(smoothing=args.smoothing).to(device)
+        # criterion = torch.nn.CrossEntropyLoss().to(device)
         print("criterion for %s Reconstruction = %s" % (args.ta_perform,str(criterion)))
     elif args.ta_perform.startswith('vqa'):
         criterion = torch.nn.BCELoss(reduction='sum').to(device)
@@ -262,8 +264,16 @@ def imshow(img: torch.Tensor):
 def train_log(epoch, loss_all:dict):
     log_data = {"epoch": epoch}
     for ta, loss in loss_all.items():
-        log_data[f"{ta}/loss"] = loss
-        # log_data[f"{ta}/accuracy"] = acc
+        log_data[f"{ta}/training_loss"] = loss
+
+    wandb.log(log_data)
+    
+def validation_log(ta_perform, epoch, stats):
+    log_data = {"epoch": epoch}
+    log_data[f'{ta_perform}/valid_loss'] = stats['loss']
+    
+    metric = list(stats.keys())[1]
+    log_data[f'{ta_perform}/{metric}'] = stats[metric]
     wandb.log(log_data)
     
 def toColor(text: str, color: str, other: str='') -> str:
@@ -282,6 +292,13 @@ def toColor(text: str, color: str, other: str='') -> str:
     """
     return f'{getattr(colorama.Fore, color.upper())}{other}{text}{colorama.Style.RESET_ALL}'
 
+def rpad(array, n=70):
+    """Right padding."""
+    current_len = len(array)
+    if current_len > n:
+        return array[: n - 1]
+    extra = n - current_len
+    return array + ([0] * extra)
 
 class NativeScalerWithGradNormCount:
     state_dict_key = "amp_scaler"
@@ -656,6 +673,72 @@ def calc_metrics(y_true, y_pred, mode=None, to_print=True):
         
         return accuracy_score(binary_truth, binary_preds)
     
+def str_type(obj, iter_limit_items: int = 10, dict_limit_items: int = 1000000) -> str:
+    """
+        Actually dump everything about... a thing.
+        can handle list and tensors and all kinds of stuff.
+        useful when you don't know what a thing is and don't wanna just print()
+        and see a bunch of tensor values, such as the output of dataloader...
+
+        e.g., 
+            >>> str_type([torch.randn(1, 2, 3), torch.randn(3, 5, 100), 17239813])
+            List[len=3](
+                Tensor[size=[1, 2, 3], dtype=torch.float32](), 
+                Tensor[size=[3, 5, 100], dtype=torch.float32](), 
+                int(17239813)
+            )
+    """
+    def str_object(obj: object):
+        return f'{str(obj.__class__)[8:-2]}({obj})'
+    def str_iterable(obj: Iterable, iter_str: bool = False):
+        s_ls = [dfs(o) for o in obj]
+        s = ", ".join(s_ls[:iter_limit_items])
+        if len(s_ls) > iter_limit_items:
+            s += ', ...'
+        if iter_str:
+            s = f"{str(obj.__class__)[8:-2]}[len={len(s_ls)}]({s})"
+        return s
+    def str_list(obj: list):
+        return f'List[len={len(obj)}]({str_iterable(obj)})'
+    def str_tuple(obj: tuple):
+        return f'Tuple[len={len(obj)}]({str_iterable(obj)})'
+    def str_tensor(obj: torch.Tensor):
+        return f'Tensor[size={list(obj.size())}, dtype={obj.dtype}]()'
+    def str_set(obj: set):
+        return f'Set[len={len(obj)}]({str_iterable(obj)})'
+    def str_dict(obj: set):
+        s_ls = [f'{dfs(key)}: {dfs(value)}' for key, value in obj.items()]
+        s = ", ".join(s_ls[:dict_limit_items])
+        if len(s_ls) > dict_limit_items:
+            s += ', ...'
+        s = f'Dict[len={len(s_ls)}]({s})'
+        return s
+    def str_str(obj: str):
+        return f'"{obj}"'
+    def str_direct(obj):
+        return f'{obj}'
+    
+    type_map = {
+        list: str_list,
+        tuple: str_tuple,
+        torch.Tensor: str_tensor,
+        set: str_set,
+        dict: str_dict,
+        str: str_str,
+        int: str_direct,
+        float: str_direct,
+        None.__class__: str_direct,
+        Iterable: lambda a: str_iterable(a, iter_str=True),
+    }
+
+    def dfs(obj: object):
+        for tp, str_fn in type_map.items():
+            if isinstance(obj, tp):
+                return str_fn(obj)
+        return str_object(obj)
+
+    return dfs(obj)
+
     
 class DiffPruningLoss(torch.nn.Module):
     def __init__(self, base_criterion: torch.nn.Module, dynamic=True, ratio_weight=2.0, main_weight=1.):

@@ -219,6 +219,7 @@ class UDeepSC_M2(nn.Module):
         
         self.text_encoder = BertTextEncoder(embed_dim=text_embed_dim)
         # Load pretrained state_dict
+        print("Load pre-train weight from bert-small")
         self.text_encoder.load_state_dict(pretrained_state_dict, strict=False)
         
         self.spe_encoder = SPTEncoder(in_chans=encoder_in_chans,num_classes=encoder_num_classes, embed_dim=speech_embed_dim,
