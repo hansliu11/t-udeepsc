@@ -101,7 +101,7 @@ def evaluate(ta_perform: str, net: torch.nn.Module, dataloader: Iterable,
                 for i in range(outputs.shape[1]):
                     # print(targets.shape)
                     # print(outputs.shape)
-                    loss += criterion(outputs, targets[:,])
+                    loss += criterion(outputs[:,i], targets[:,i])
                     preds[:,i] = outputs[:,i].max(-1)[-1] 
 
                 preds = tokens2sentence(preds)
@@ -184,6 +184,8 @@ def train_class_batch_uni(ta_perform, model, sel_batch, targets, criterion):
     elif ta_perform.startswith('textr'):
         outputs = model(text=texts, ta_perform=ta_perform) * 1
         targets = targets[:,1:]
+        # print(targets.shape)
+        # print(outputs.shape)
         for i in range(outputs.shape[1]):
             loss += criterion[ta_perform](outputs[:,i], targets[:,i])*5
     elif ta_perform.startswith('vqa'):

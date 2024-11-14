@@ -39,8 +39,8 @@ def sel_criterion_train(args, ta_sel, device):
             criterion = torch.nn.MSELoss().to(device)
             print("criterion for %s Reconstruction = %s" % (args.ta_perform,str(criterion)))
         elif ta.startswith('textr'):
-            # criterion = LabelSmoothingCrossEntropy(smoothing=args.smoothing).to(device)
-            criterion = torch.nn.CrossEntropyLoss().to(device)
+            criterion = LabelSmoothingCrossEntropy(smoothing=args.smoothing).to(device)
+            # criterion = torch.nn.CrossEntropyLoss().to(device)
             print("criterion for %s Reconstruction = %s" % (args.ta_perform,str(criterion)))
         elif ta.startswith('vqa'):
             criterion = torch.nn.BCELoss(reduction='sum').to(device)
@@ -304,7 +304,7 @@ class NativeScalerWithGradNormCount:
     state_dict_key = "amp_scaler"
 
     def __init__(self):
-        self._scaler = torch.cuda.amp.GradScaler()
+        self._scaler = torch.amp.GradScaler('cuda')
 
     def __call__(self, loss, optimizer, clip_grad=None, parameters=None, create_graph=False, update_grad=True):
         self._scaler.scale(loss).backward(create_graph=create_graph)
@@ -587,14 +587,18 @@ def tokens2sentence(outputs):
     sentences = []
     #print(outputs)
     for tokens in outputs:
-        sentence = []
-        for token in tokens:
+        # sentence = []
+        # for token in tokens:
             
-            word = tokenizer.decode([int(token)])
+        #     word = tokenizer.decode([int(token)])
  
-            if word == '[PAD]':
-                break
-            sentence.append(word)
+        #     if word == '[PAD]':
+        #         break
+        #     sentence.append(word)
+        
+        tokens = tokens.tolist()
+        tokens = tokenizer.decode(tokens)
+        sentence = tokens[0].split(" ")
         sentences.append(sentence)
     return sentences  
  
