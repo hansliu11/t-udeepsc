@@ -249,41 +249,17 @@ def load_state_dict(model, state_dict, prefix='', ignore_missing="relative_posit
             model.__class__.__name__, ignore_missing_keys))
     if len(error_msgs) > 0:
         print('\n'.join(error_msgs))
-    
-def draw_line_chart(x, y_lists, labels=None, title="Line Chart", xlabel="X-axis", ylabel="Y-axis", output="plot"):
-    """
-    Draws a line chart using two lists for x and y coordinates.
 
-    Inputs:
-        x (list): Values for the x-axis.
-        y_lists (list of lists): A list of lists where each inner list represents y-values for one line.
-        labels (list): Labels for each line. Default is None, which will use a generic label.
-        title (str): Title of the chart. Default is "Line Chart".
-        xlabel (str): Label for the x-axis. Default is "X-axis".
-        ylabel (str): Label for the y-axis. Default is "Y-axis".
+def imshow(img: torch.Tensor):
     """
-    if not all(len(x) == len(y) for y in y_lists):
-        raise ValueError("All y-lists must have the same length as the x-list.")
-    
-    plt.figure(figsize=(8, 5))  # Set the figure size
-    
-    # Plot each y-list against the x-list
-    for i, y in enumerate(y_lists):
-        label = labels[i] if labels and i < len(labels) else f"Line {i+1}"
-        plt.plot(x, y, marker='o', linestyle='-', label=label)  # Plot each line
-    
-    # Set titles and labels
-    plt.title(title)
-    plt.xlabel(xlabel)
-    plt.ylabel(ylabel)
-    
-    # Add a legend to distinguish the lines
-    plt.legend()
-    plt.tight_layout()  # Adjust layout to fit elements properly
-    # plt.show() # on workstation, plt.show() might deadlock due to the workstation
-    
-    plt.savefig(output + '.png')
-    
+        img: normalzied to 0.5
+    """
+    return # on workstation, plt.show() might deadlock due to the workstation
+           # actually having a desktop environment you can't access
+    img = img / 2 + 0.5     # unnormalize
+    npimg = img.numpy()
+    plt.imshow(np.transpose(npimg, (1, 2, 0)))
+    plt.show()
     
 def train_log(epoch, loss_all:dict):
     log_data = {"epoch": epoch}
