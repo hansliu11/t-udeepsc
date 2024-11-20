@@ -1,6 +1,8 @@
 import math
 import torch
 import numpy as np
+from utils import *
+from typing import *
 
 bit_per_symbol = 4 # bits per symbol (64QAM)
 mapping_table = {
@@ -35,6 +37,51 @@ def group_bits(bitc):
         x = x+bit_per_symbol
     return bity
 
+def tensor_real2complex(input: torch.Tensor, method: Literal['view', 'concat']) -> torch.Tensor:
+    """
+        Args:
+            input: real tensor with shape (*, N), where N must be even. only supports floating precision tensors
+            mode: the method of which the tensors are converted.
+                  For example, given tensor [a, b, c, d]:
+                  - view: [a + bi, c + di] (i.e., torch.view_as_complex())
+                  - concat: [a + ci, b + di] (i.e., input = [Re(return), Im(return)])
+
+        Returns:
+            complex tensor with shape (*, N/2)
+            will return a copy
+    """
+    if method == 'view':
+        size = (*input.size()[:-1], input.size()[-1] // 2, 2)
+        input = input.reshape(size).contiguous()
+        ret = torch.view_as_complex_copy(input)
+    else:   # concat
+        half = input.shape[-1] // 2
+        real_part = input[..., :half]
+        imag_part = input[..., half:]
+        ret = torch.complex(real_part, imag_part)
+    return ret
+
+def tensor_complex2real(input: torch.Tensor, method: Literal['view', 'concat']) -> torch.Tensor:
+    """
+        Args:
+            input: complex tensor with shape (*, N)
+            mode: the method of which the tensors are converted.
+                  For example, given tensor [a + bi, c + di]:
+                  - view: [a, b, c, d] (i.e., torch.view_as_complex())
+                  - concat: [a, c, b, d] (i.e., return = [Re(input), Im(input)])
+
+        Returns:
+            real tensor with shape (*, N*2)
+            will return a copy!
+    """ 
+    real_part = input.real      # size (*, N)
+    imag_part = input.imag
+    
+    if method == 'view':
+        # (*, N, 2) -> (*, N*2)
+        return torch.stack([real_part, imag_part], dim=-1).view(*input.shape[:-1], -1)
+    elif method == 'concat':
+        return torch.cat([real_part, imag_part], dim=-1)
 
 def channel(signal, SNRdb, ouput_power=False):
     signal_power = np.mean(abs(signal**2))
@@ -162,5 +209,6 @@ def power_norm_batchwise(signal, power=1):
     signal_power = torch.sum((signal[:,:,0]**2 + signal[:,:,1]**2), dim=-1)/num_complex
 
     signal = signal * math.sqrt(power) / torch.sqrt(signal_power.unsqueeze(-1).unsqueeze(-1))
-    signal = signal.view(signal_shape)
+    # print("Signal after power normalize: " + str_type(signal))
+    # signal = signal.view(signal_shape)
     return signal

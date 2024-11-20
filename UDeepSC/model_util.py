@@ -31,20 +31,22 @@ def noise_gen(is_train):
     min_snr, max_snr = -6, 18
     diff_snr = max_snr - min_snr
     
-    min_var, max_var = 10**(-min_snr/20), 10**(-max_snr/20)
+    min_var, max_var = 10**(-min_snr / 20), 10**(-max_snr / 20)
     diff_var = max_var - min_var
     if is_train:
-        # b = torch.bernoulli(1/5.0*torch.ones(1))
+        # b = torch.bernoulli(1 / 5.0 * torch.ones(1))
         # if b > 0.5:
         #     channel_snr = torch.FloatTensor([20])
         # else:               
-        #     channel_snr = torch.rand(1)*diff_snr+min_snr
+        #     channel_snr = torch.rand(1) * diff_snr+min_snr
+        # noise_var = 10**(-channel_snr / 20)
+        # noise_var = torch.rand(1) * diff_var+min_var  
+        # channel_snr = 10 * torch.log10((1 / noise_var)**2)
+        # channel_snr = torch.rand(1) * diff_snr + min_snr
         # noise_var = 10**(-channel_snr/20)
-        # noise_var = torch.rand(1)*diff_var+min_var  
-        # channel_snr = 10*torch.log10((1/noise_var)**2)
-        # channel_snr = torch.rand(1)*diff_snr+min_snr
-        # noise_var = 10**(-channel_snr/20)
-        channel_snr = torch.FloatTensor([12])
+        
+        ## paper only train on 12 and -2
+        channel_snr = torch.FloatTensor([-2])
         noise_var = torch.FloatTensor([1]) * 10**(-channel_snr/20)  
     else:
         channel_snr = torch.FloatTensor([12])
@@ -708,12 +710,37 @@ class VectorQuantizer(nn.Module):
     
 
 class Channels():
-    
-    def AWGN(self, Tx_sig, n_std):
+    def AWGN_Var(self, Tx_sig, n_std):
         device = Tx_sig.device
         noise = torch.normal(0, n_std/math.sqrt(2), size=Tx_sig.shape).to(device)
         Rx_sig = Tx_sig + noise
         return Rx_sig
+
+    def AWGN(self, Tx_sig: torch.Tensor, SNRdb: float, ouput_power=False):
+        '''
+            make AWGN noise for a signal (applying the signal on it)
+            the noise for a signal will be n ~ CN(0, sigma^2 * I),
+            where CN is circularly symmetric complex Gaussian distribution
+
+            Args:
+                Tx_sig: complex tensor with any shape
+                SNRdb: signal-to-noise ratio in decibel
+                        can be float or a real tensor (same shape and device as signal)
+            Return:
+                the signal with complex noise applying onto it
+        '''
+        device = Tx_sig.device
+        signal_power = torch.mean(Tx_sig.abs()**2, dim=-1, keepdim=True)
+        snr_linear = 10 ** (SNRdb / 10.0)
+        sigma2 = signal_power / snr_linear # calculate noise power based on signal power and SNR
+        if ouput_power:
+            print ("RX Signal power: %.4f. Noise power: %.4f" % (signal_power, sigma2))     
+        # Generate complex noise with given variance
+        # noise = torch.sqrt(sigma2 / 2) * (torch.randn_like(Tx_sig.real) + 1j*torch.randn_like(Tx_sig.imag)).to(device)
+        noise_real = torch.randn_like(Tx_sig.real) * torch.sqrt(sigma2 / 2)
+        noise_imag = torch.randn_like(Tx_sig.imag) * torch.sqrt(sigma2 / 2)
+        noise = torch.complex(noise_real, noise_imag).to(device)
+        return Tx_sig + noise
  
     def Rayleigh(self, Tx_sig, n_std):
         device = Tx_sig.device

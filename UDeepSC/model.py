@@ -182,10 +182,11 @@ class UDeepSC_M1(nn.Module):
 
 
 class UDeepSC_M2(nn.Module):
-    '''
-        1. include more details (e.g. symbol number) for each task
-        2. extract transmit part as a function
-    '''
+    """
+        Similar to UDeepSC_M1, but 
+            1. include more details (e.g. symbol number) for each task
+            2. extract transmit part as a function
+    """
     def __init__(self,mode='tiny',
                  img_size=224, patch_size=16, encoder_in_chans=3, encoder_num_classes=0, 
                  img_embed_dim=384, text_embed_dim=384, speech_embed_dim=128, img_encoder_depth=4, 
@@ -219,7 +220,7 @@ class UDeepSC_M2(nn.Module):
         
         self.text_encoder = BertTextEncoder(embed_dim=text_embed_dim)
         # Load pretrained state_dict
-        print("Load pre-train weight from bert-small")
+        print(f"Load pre-train weight from bert-{mode}")
         self.text_encoder.load_state_dict(pretrained_state_dict, strict=False)
         
         self.spe_encoder = SPTEncoder(in_chans=encoder_in_chans,num_classes=encoder_num_classes, embed_dim=speech_embed_dim,
@@ -271,9 +272,9 @@ class UDeepSC_M2(nn.Module):
         self.head = nn.ModuleDict()
         self.head['imgc'] = nn.Linear(decoder_embed_dim, IMGC_NUMCLASS)
         self.head['textc'] = nn.Linear(decoder_embed_dim, TEXTC_NUMCLASS)
-        self.head['textr'] = nn.Linear(decoder_embed_dim, TEXTR_NUMCLASS)
+        self.head['textr'] = nn.Linear(decoder_embed_dim, TEXTR_NUMCLASS) ## shape( , , 34000)
         self.head['vqa'] = nn.Linear(decoder_embed_dim, VQA_NUMCLASS)
-        self.head['imgr'] = nn.Linear(decoder_embed_dim, IMGR_LENGTH)
+        self.head['imgr'] = nn.Linear(decoder_embed_dim, IMGR_LENGTH) ## shape (, , 48)
         self.head['msa'] = nn.Linear(decoder_embed_dim, MSA_NUMCLASS)
 
 
@@ -297,63 +298,167 @@ class UDeepSC_M2(nn.Module):
     def get_num_layers(self):
         return len(self.blocks)
     
-    def transmit(self, input_signal, noise_std, encoder_to_channel, channel_to_decoder):
+    def transmit(self, input_signal, SNRdb, encoder_to_channel, channel_to_decoder):
         x = encoder_to_channel(input_signal)
+        x_shape = x.shape
+        
         x = power_norm_batchwise(x)
-        x = self.channel.AWGN(x, noise_std.item())
+        x = tensor_real2complex(x, 'concat')
+        # x = self.channel.AWGN_Var(x, noise_std)
+        x = self.channel.AWGN(x, SNRdb.item())
+        x = tensor_complex2real(x, 'concat')
+        
+        x = x.view(x_shape)
         x = channel_to_decoder(x)
         return x
+
+    def get_signals(self, text=None, img=None, speech=None, ta_perform=None, SNRdb:torch.FloatTensor=torch.FloatTensor([12])):
+        """
+            just get the signal, for testing purposes
+            almost the same as forward()
+            
+            Args:
+                inputs: 
+                    text, image, speech data for task
+                    ta_perform: target task need to perform
+                    SNRdb: SNR of the channel for test
+            Returns:
+                A dict of at most 3 modalities signal list, each list include:
+                0: signal before channel
+                1: signal after tranmitting through channel
+        """
+        signals = {}
+        
+        if text is not None:
+            x_text = self.text_encoder(text, ta_perform)[0]
+            if ta_perform.startswith('textc'):
+                x_text = x_text[:,0,:].unsqueeze(1)
+                encoder_to_channel = self.textc_encoder_to_channel
+                channel_to_decoder = self.textc_channel_to_decoder
+            elif ta_perform.startswith('textr'):
+                x_text = x_text[:,1:-1,:]  
+                encoder_to_channel = self.textr_encoder_to_channel
+                channel_to_decoder = self.textr_channel_to_decoder
+            elif ta_perform.startswith('vqa'):
+                x_text = x_text[:,0:2,:]
+                encoder_to_channel = self.vqa_text_encoder_to_channel
+                channel_to_decoder = self.vqa_text_channel_to_decoder
+            elif ta_perform.startswith('msa'):
+                x_text = x_text[:,-2:-1,:]
+                encoder_to_channel = self.msa_text_encoder_to_channel
+                channel_to_decoder = self.msa_text_channel_to_decoder
+            x_text_before_ch = encoder_to_channel(x_text)
+            x_text = power_norm_batchwise(x_text_before_ch)
+            x_text = self.channel.AWGN(x_text, SNRdb.item())
+            x_text = channel_to_decoder(x_text_before_ch, x_text)
+            
+            signals['text'] = [x_text_before_ch, x_text]
+            
+        if img is not None:
+            x_img = self.img_encoder(img, ta_perform)
+            if ta_perform.startswith('imgc'):
+                x_img = x_img[:,0,:].unsqueeze(1)
+                encoder_to_channel = self.imgc_encoder_to_channel
+                channel_to_decoder = self.imgc_channel_to_decoder
+                
+            elif ta_perform.startswith('imgr'):
+                x_img = x_img[:,1:-1,:]
+                encoder_to_channel = self.imgr_encoder_to_channel
+                channel_to_decoder = self.imgr_channel_to_decoder
+                
+            elif ta_perform.startswith('vqa'):
+                x_img = x_img[:,0:3,:]
+                encoder_to_channel = self.vqa_img_encoder_to_channel
+                channel_to_decoder = self.vqa_img_channel_to_decoder
+                
+            elif ta_perform.startswith('msa'):
+                x_img = x_img[:,0,:].unsqueeze(1)
+                encoder_to_channel = self.msa_img_encoder_to_channel
+                channel_to_decoder = self.msa_img_channel_to_decoder
+    
+            x_img_before_ch = encoder_to_channel(x_img)
+            x_img = power_norm_batchwise(x_img_before_ch)
+            x_img = self.channel.AWGN(x_img, SNRdb.item())
+            x_img = channel_to_decoder(x_img)
+            
+            signals['img'] = [x_img_before_ch, x_img]
+        
+        if speech is not None:
+            x_spe = self.spe_encoder(speech, ta_perform)
+            x_spe = x_spe[:,0,:].unsqueeze(1)
+            x_spe_before_ch = self.msa_spe_encoder_to_channel(x_spe)
+            x_spe = power_norm_batchwise(x_spe_before_ch)
+            x_spe = self.channel.AWGN(x_spe, SNRdb.item())
+            x_spe = self.msa_spe_channel_to_decoder(x_spe)
+            
+            signals['spe'] = [x_spe_before_ch, x_spe]
+            
+        return signals
 
     @torch.jit.ignore
     def no_weight_decay(self):
         return {'pos_embed', 'cls_token', 'mask_token'}
 
-    def forward(self, text=None, img=None, speech=None, ta_perform=None, test_snr=torch.FloatTensor([12])):
+    def forward(self, text=None, img=None, speech=None, ta_perform=None, test_snr:torch.FloatTensor=torch.FloatTensor([12])):
+        """
+            Input:
+                text: text data (tokenized first) for task need text
+                img: image data for task need image
+                speech: audio data for task need speech
+                ta_perform: The task to be eval (execute)
+            Output:
+                Task result executed by decoder of receiver
+                Different shape for different tasks and data type:
+                Textr: (batch_size, seq length, vocab size) for vacab size = 34000
+        """
+                 
         if self.training:
             noise_snr, noise_std = noise_gen(self.training)
-            noise_std,noise_snr = noise_std.cuda(), noise_snr.cpu().item()
+            noise_std = noise_std.cuda()
         else:
             noise_std = torch.FloatTensor([1]) * 10**(-test_snr/20) 
+            noise_snr = test_snr
+            # print(f"SNR: {noise_snr}")
         if text is not None:
             # x_text = self.text_encoder(ta_perform, text, return_dict=False)[0]
             x_text = self.text_encoder(text, ta_perform)[0]
             # x_text = self.LN(x_text)
             if ta_perform.startswith('textc'):
                 x_text = x_text[:,0,:].unsqueeze(1)
-                x_text = self.transmit(x_text, noise_std, self.textc_encoder_to_channel, self.textc_channel_to_decoder)
+                x_text = self.transmit(x_text, noise_snr, self.textc_encoder_to_channel, self.textc_channel_to_decoder)
             elif ta_perform.startswith('textr'):
                 x_text = x_text[:,1:-1,:]  
-                x_text = self.transmit(x_text, noise_std, self.textr_encoder_to_channel, self.textr_channel_to_decoder)
+                x_text = self.transmit(x_text, noise_snr, self.textr_encoder_to_channel, self.textr_channel_to_decoder)
             elif ta_perform.startswith('vqa'):
                 x_text = x_text[:,0:2,:]
-                x_text = self.transmit(x_text, noise_std, self.vqa_text_encoder_to_channel, self.vqa_text_channel_to_decoder)
+                x_text = self.transmit(x_text, noise_snr, self.vqa_text_encoder_to_channel, self.vqa_text_channel_to_decoder)
             elif ta_perform.startswith('msa'):
                 x_text = x_text[:,-2:-1,:]
-                x_text = self.transmit(x_text, noise_std, self.msa_text_encoder_to_channel, self.msa_text_channel_to_decoder)
+                x_text = self.transmit(x_text, noise_snr, self.msa_text_encoder_to_channel, self.msa_text_channel_to_decoder)
 
             
         if img is not None:
             x_img = self.img_encoder(img, ta_perform)
             if ta_perform.startswith('imgc'):
                 x_img = x_img[:,0,:].unsqueeze(1)
-                x_img = self.transmit(x_img, noise_std, self.imgc_encoder_to_channel, self.imgc_channel_to_decoder)
+                x_img = self.transmit(x_img, noise_snr, self.imgc_encoder_to_channel, self.imgc_channel_to_decoder)
                 
             elif ta_perform.startswith('imgr'):
                 x_img = x_img[:,1:-1,:]
-                x_img = self.transmit(x_img, noise_std, self.imgr_encoder_to_channel, self.imgr_channel_to_decoder)
+                x_img = self.transmit(x_img, noise_snr, self.imgr_encoder_to_channel, self.imgr_channel_to_decoder)
                 
             elif ta_perform.startswith('vqa'):
                 x_img = x_img[:,0:3,:]
-                x_img = self.transmit(x_img, noise_std, self.vqa_img_encoder_to_channel, self.vqa_img_channel_to_decoder)
+                x_img = self.transmit(x_img, noise_snr, self.vqa_img_encoder_to_channel, self.vqa_img_channel_to_decoder)
                 
             elif ta_perform.startswith('msa'):
                 x_img = x_img[:,0,:].unsqueeze(1)
-                x_img = self.transmit(x_img, noise_std, self.msa_img_encoder_to_channel, self.msa_img_channel_to_decoder)
+                x_img = self.transmit(x_img, noise_snr, self.msa_img_encoder_to_channel, self.msa_img_channel_to_decoder)
 
         if speech is not None:
             x_spe = self.spe_encoder(speech, ta_perform)
             x_spe = x_spe[:,0,:].unsqueeze(1)
-            x_spe = self.transmit(x_spe, noise_std, self.msa_spe_encoder_to_channel, self.msa_spe_channel_to_decoder)
+            x_spe = self.transmit(x_spe, noise_snr, self.msa_spe_encoder_to_channel, self.msa_spe_channel_to_decoder)
         
         if ta_perform.startswith('img'):
             x = x_img
