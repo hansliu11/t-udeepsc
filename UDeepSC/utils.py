@@ -274,6 +274,7 @@ def draw_line_chart(x, y_lists, labels=None, title="Line Chart", xlabel="X-axis"
     
     # Set titles and labels
     plt.title(title)
+    plt.xticks(x, labels=x)
     plt.xlabel(xlabel)
     plt.ylabel(ylabel)
     

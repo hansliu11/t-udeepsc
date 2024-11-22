@@ -85,7 +85,7 @@ def text_test_single(ta_perform:str, text, snr:torch.FloatTensor, model, device)
     
     return preds
 
-def test_SNR(ta_perform:str, SNRrange:list[int], model, device, dataset):
+def test_SNR(ta_perform:str, SNRrange:list[int], model_path, args,device, dataset):
     """
     TODO
     Test model on different SNR
@@ -94,6 +94,13 @@ def test_SNR(ta_perform:str, SNRrange:list[int], model, device, dataset):
                     (should be [min SNR,  max SNR])
     """
     logger.info("Start test different SNR")
+    
+    args.resume = model_path
+    
+    model = get_model(args)
+    print(f'{args.resume = }')
+    checkpoint_model = load_checkpoint(model, args)
+    load_state_dict(model, checkpoint_model, prefix=args.model_prefix)
     
     model.eval()
     if ta_perform.startswith('imgr'):
@@ -163,23 +170,27 @@ def main_test_textr_SNR():
         task_fold = 'msa'
 
     folder = Path('./output'+ '/' + task_fold)
-    best_model_path = get_best_checkpoint(folder, "snr12")
-    print(f'{best_model_path = }')
-    opts.model = 'UDeepSC_new_model'
-    opts.resume = best_model_path
-    opts.ta_perform = ta_perform
     
-    model = get_model(opts)
-    print(f'{opts.resume = }')
-    checkpoint_model = load_checkpoint(model, opts)
-    load_state_dict(model, checkpoint_model, prefix=opts.model_prefix)
+    # test model trained on snr 12
+    best_model_path1 = get_best_checkpoint(folder, "snr12")
+    print(f'{best_model_path1 = }')
+    
+    # test model trained on snr -2
+    best_model_path2 = get_best_checkpoint(folder, "snr-2")
+    print(f'{best_model_path2 = }')
+    
+    opts.model = 'UDeepSC_new_model'
+    opts.ta_perform = ta_perform
     
     texts, targets = get_sample_text(opts)
     SNRrange = [-6, 12]
-    bleus = test_SNR(ta_perform, SNRrange, model, device, [texts, targets])
+    
+    snr12_bleus = test_SNR(ta_perform, SNRrange, best_model_path1, opts, device, [texts, targets])
+    
+    snrNeg_bleus = test_SNR(ta_perform, SNRrange, best_model_path2, opts, device, [texts, targets])
     
     x = [i for i in range(SNRrange[0], SNRrange[1] + 2, 2)]
-    models = [bleus]
+    models = [snr12_bleus, snrNeg_bleus]
     labels = ["Textr-LSCE (SNR = 12)"]
     draw_line_chart(x, models, labels, "Blue to SNR Chart","SNR", "Bleu score", output="bleu_SNR")
 
@@ -203,7 +214,7 @@ def main_test1():
         task_fold = 'msa'
 
     folder = Path('./output'+ '/' + task_fold)
-    best_model_path = get_best_checkpoint(folder, 'checkpoint')
+    best_model_path = get_best_checkpoint(folder, 'snr12')
     print(f'{best_model_path = }')
     opts.model = 'UDeepSC_new_model'
     opts.resume = best_model_path
@@ -225,5 +236,5 @@ def main_test1():
     received = text_test(ta_perform, inputs, test_snr, model, device)
 
 if __name__ == '__main__':
-    main_test1()
-    # main_test_textr_SNR()
+    # main_test1()
+    main_test_textr_SNR()
