@@ -49,6 +49,7 @@ def text_test(ta_perform:str, texts:list[str], snr:torch.FloatTensor, model, dev
     logger.info("Start test textr")
     
     texts = texts.to(device)
+    model.training = False ## set model test mode
     outputs = model(text=texts, ta_perform=ta_perform, test_snr=snr)
     
     texts = texts[:,1:]
@@ -58,6 +59,8 @@ def text_test(ta_perform:str, texts:list[str], snr:torch.FloatTensor, model, dev
     
     preds = tokens2sentence(preds)
     texts = tokens2sentence(texts)
+    
+    print(f'Test at SNR = {snr.item()} db')
     for i, (pred, target) in enumerate(zip(preds, texts)):
         print(f'Sentence {i + 1}')
         print('Transmitted: ' + ' '.join(target[:-1]))
@@ -149,6 +152,79 @@ def test_SNR(ta_perform:str, SNRrange:list[int], model_path, args,device, datase
             avg_bleu.append(bleu_meter.avg)
         
         return avg_bleu
+    
+def test_features(ta:str, test_snr: torch.FloatTensor, model_path, args,device, dataset):
+    logger.info("Start test features before transmission and after")
+    
+    args.resume = model_path
+    
+    model = get_model(args)
+    print(f'{args.resume = }')
+    checkpoint_model = load_checkpoint(model, args)
+    load_state_dict(model, checkpoint_model, prefix=args.model_prefix)
+    
+    # Need modify
+    if ta.startswith('img'):
+        imgs = dataset[0].to(device, non_blocking=True)
+        targets = dataset[1].to(device, non_blocking=True)
+    elif ta.startswith('text'):
+        texts = dataset[0].to(device, non_blocking=True)
+        targets = dataset[1].to(device, non_blocking=True)
+    elif ta.startswith('vqa'):
+        imgs = dataset[0].to(device, non_blocking=True)
+        texts = dataset[1].to(device, non_blocking=True)
+        targets = dataset[2].to(device, non_blocking=True)
+    elif ta.startswith('msa'):
+        imgs = dataset[0].to(device, non_blocking=True)
+        texts = dataset[1].to(device, non_blocking=True) 
+        speechs = dataset[2].to(device, non_blocking=True)
+        targets = dataset[3].to(device, non_blocking=True)
+    else:
+        raise NotImplementedError()
+    
+    signals = model.get_signals(text=texts, ta_perform=ta, SNRdb=test_snr)
+    text_signals_before, text_signals_after = signals['text']
+    batch_size = text_signals_before.shape[0]
+    for i in range(batch_size):
+        print("Before transmitting: ")
+        print(str_type(text_signals_before[i]))
+        print(text_signals_before[i])
+        
+        print("After transmitting: ")
+        print(str_type(text_signals_after[i]))
+        print(text_signals_after[i])
+        
+    return text_signals_before, text_signals_after
+
+def main_test_signals():
+    opts = get_args()
+    ta_perform = 'textr'
+    device = 'cpu'
+    
+    if ta_perform.startswith('imgc'):
+        task_fold = 'imgc'
+    elif ta_perform.startswith('imgr'):
+        task_fold = 'imgr'
+    elif ta_perform.startswith('textc'):
+        task_fold = 'textc'
+    elif ta_perform.startswith('textr'):
+        task_fold = 'ckpt_textr'
+        task_fold = 'textr_smooth_005'
+    elif ta_perform.startswith('vqa'):
+        task_fold = 'vqa'
+    elif ta_perform.startswith('msa'):
+        task_fold = 'msa'
+
+    folder = Path('./output'+ '/' + task_fold)
+    
+    best_model_path1 = get_best_checkpoint(folder, "snr12")
+    opts.model = 'UDeepSC_new_model'
+    opts.ta_perform = ta_perform
+    
+    texts, targets = get_sample_text(opts)
+    test_snr = torch.FloatTensor([12])
+    
+    signals = test_features(ta_perform, test_snr, best_model_path1, opts, device, [texts, targets])
 
 def main_test_textr_SNR():
     opts = get_args()
@@ -189,10 +265,12 @@ def main_test_textr_SNR():
     
     snrNeg_bleus = test_SNR(ta_perform, SNRrange, best_model_path2, opts, device, [texts, targets])
     
+    print(snr12_bleus)
+    
     x = [i for i in range(SNRrange[0], SNRrange[1] + 2, 2)]
     models = [snr12_bleus, snrNeg_bleus]
-    labels = ["Textr-LSCE (SNR = 12)"]
-    draw_line_chart(x, models, labels, "Blue to SNR Chart","SNR", "Bleu score", output="bleu_SNR")
+    labels = ["Textr-LSCE (SNR = 12)", "Textr-LSCE (SNR = -2)"]
+    draw_line_chart(x, models, labels, "AWGN","SNR/db", "Bleu score", output="bleu_SNR")
 
 def main_test1():
     opts = get_args()
@@ -231,10 +309,11 @@ def main_test1():
     
     # SNR for testing, default = 12
     # range: [-6, 12]
-    test_snr = torch.FloatTensor([4])
+    test_snr = torch.FloatTensor([-2])
     
     received = text_test(ta_perform, inputs, test_snr, model, device)
 
 if __name__ == '__main__':
-    # main_test1()
-    main_test_textr_SNR()
+    main_test1()
+    # main_test_textr_SNR()
+    # main_test_signals()

@@ -265,7 +265,7 @@ def draw_line_chart(x, y_lists, labels=None, title="Line Chart", xlabel="X-axis"
     if not all(len(x) == len(y) for y in y_lists):
         raise ValueError("All y-lists must have the same length as the x-list.")
     
-    plt.figure(figsize=(8, 5))  # Set the figure size
+    plt.figure(figsize=(6, 7))  # Set the figure size
     
     # Plot each y-list against the x-list
     for i, y in enumerate(y_lists):
@@ -273,10 +273,17 @@ def draw_line_chart(x, y_lists, labels=None, title="Line Chart", xlabel="X-axis"
         plt.plot(x, y, marker='o', linestyle='-', label=label)  # Plot each line
     
     # Set titles and labels
-    plt.title(title)
+    plt.title(title, fontsize = 16)
     plt.xticks(x, labels=x)
-    plt.xlabel(xlabel)
-    plt.ylabel(ylabel)
+    plt.xlabel(xlabel, fontsize=16)
+    plt.ylabel(ylabel, fontsize=16)
+    # Modify tick label size
+    plt.tick_params(axis='both', which='major', labelsize=14)
+    
+    plt.grid(True)  # Add grid lines
+
+    # Set the min and max y-axis ticks
+    # plt.gca().set_ylim(0.3, 1.0)  # Minimum at 15 and maximum at 45
     
     # Add a legend to distinguish the lines
     plt.legend()

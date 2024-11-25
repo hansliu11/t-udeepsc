@@ -38,15 +38,17 @@ def noise_gen(is_train):
         # if b > 0.5:
         #     channel_snr = torch.FloatTensor([20])
         # else:               
-        #     channel_snr = torch.rand(1) * diff_snr+min_snr
+        #     channel_snr = torch.rand(1) * diff_snr + min_snr
         # noise_var = 10**(-channel_snr / 20)
+        
         # noise_var = torch.rand(1) * diff_var+min_var  
         # channel_snr = 10 * torch.log10((1 / noise_var)**2)
+        
         # channel_snr = torch.rand(1) * diff_snr + min_snr
         # noise_var = 10**(-channel_snr/20)
         
         ## paper only train on 12 and -2
-        channel_snr = torch.FloatTensor([-2])
+        channel_snr = torch.FloatTensor([12])
         noise_var = torch.FloatTensor([1]) * 10**(-channel_snr/20)  
     else:
         channel_snr = torch.FloatTensor([12])

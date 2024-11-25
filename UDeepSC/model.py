@@ -328,68 +328,63 @@ class UDeepSC_M2(nn.Module):
                 1: signal after tranmitting through channel
         """
         signals = {}
+        noise_std = torch.FloatTensor([1]) * 10**(-SNRdb/20) 
+        noise_snr = SNRdb
         
         if text is not None:
             x_text = self.text_encoder(text, ta_perform)[0]
             if ta_perform.startswith('textc'):
-                x_text = x_text[:,0,:].unsqueeze(1)
+                x_text_before_ch = x_text[:,0,:].unsqueeze(1)
                 encoder_to_channel = self.textc_encoder_to_channel
                 channel_to_decoder = self.textc_channel_to_decoder
             elif ta_perform.startswith('textr'):
-                x_text = x_text[:,1:-1,:]  
+                x_text_before_ch = x_text[:,1:-1,:]  
                 encoder_to_channel = self.textr_encoder_to_channel
                 channel_to_decoder = self.textr_channel_to_decoder
             elif ta_perform.startswith('vqa'):
-                x_text = x_text[:,0:2,:]
+                x_text_before_ch = x_text[:,0:2,:]
                 encoder_to_channel = self.vqa_text_encoder_to_channel
                 channel_to_decoder = self.vqa_text_channel_to_decoder
             elif ta_perform.startswith('msa'):
-                x_text = x_text[:,-2:-1,:]
+                x_text_before_ch = x_text[:,-2:-1,:]
                 encoder_to_channel = self.msa_text_encoder_to_channel
                 channel_to_decoder = self.msa_text_channel_to_decoder
-            x_text_before_ch = encoder_to_channel(x_text)
-            x_text = power_norm_batchwise(x_text_before_ch)
-            x_text = self.channel.AWGN(x_text, SNRdb.item())
-            x_text = channel_to_decoder(x_text_before_ch, x_text)
+            
+            x_text = self.transmit(x_text_before_ch, noise_snr,encoder_to_channel, channel_to_decoder)
             
             signals['text'] = [x_text_before_ch, x_text]
             
         if img is not None:
             x_img = self.img_encoder(img, ta_perform)
             if ta_perform.startswith('imgc'):
-                x_img = x_img[:,0,:].unsqueeze(1)
+                x_img_before_ch = x_img[:,0,:].unsqueeze(1)
                 encoder_to_channel = self.imgc_encoder_to_channel
                 channel_to_decoder = self.imgc_channel_to_decoder
                 
             elif ta_perform.startswith('imgr'):
-                x_img = x_img[:,1:-1,:]
+                x_img_before_ch = x_img[:,1:-1,:]
                 encoder_to_channel = self.imgr_encoder_to_channel
                 channel_to_decoder = self.imgr_channel_to_decoder
                 
             elif ta_perform.startswith('vqa'):
-                x_img = x_img[:,0:3,:]
+                x_img_before_ch = x_img[:,0:3,:]
                 encoder_to_channel = self.vqa_img_encoder_to_channel
                 channel_to_decoder = self.vqa_img_channel_to_decoder
                 
             elif ta_perform.startswith('msa'):
-                x_img = x_img[:,0,:].unsqueeze(1)
+                x_img_before_ch = x_img[:,0,:].unsqueeze(1)
                 encoder_to_channel = self.msa_img_encoder_to_channel
                 channel_to_decoder = self.msa_img_channel_to_decoder
     
-            x_img_before_ch = encoder_to_channel(x_img)
-            x_img = power_norm_batchwise(x_img_before_ch)
-            x_img = self.channel.AWGN(x_img, SNRdb.item())
-            x_img = channel_to_decoder(x_img)
+            x_img = self.transmit(x_img_before_ch, noise_snr,encoder_to_channel, channel_to_decoder)
             
             signals['img'] = [x_img_before_ch, x_img]
         
         if speech is not None:
             x_spe = self.spe_encoder(speech, ta_perform)
-            x_spe = x_spe[:,0,:].unsqueeze(1)
-            x_spe_before_ch = self.msa_spe_encoder_to_channel(x_spe)
-            x_spe = power_norm_batchwise(x_spe_before_ch)
-            x_spe = self.channel.AWGN(x_spe, SNRdb.item())
-            x_spe = self.msa_spe_channel_to_decoder(x_spe)
+            x_spe_before_ch = x_spe[:,0,:].unsqueeze(1)
+           
+            x_spe = self.transmit(x_spe_before_ch, noise_snr, self.msa_spe_encoder_to_channel, self.msa_spe_channel_to_decoder)
             
             signals['spe'] = [x_spe_before_ch, x_spe]
             
