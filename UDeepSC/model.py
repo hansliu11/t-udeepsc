@@ -212,6 +212,8 @@ class UDeepSC_M2(nn.Module):
                                 use_learnable_pos_emb=use_learnable_pos_emb)
         
         # bert_ckpt = f"/Data1/zhangguangyi/SemanRes2/JSACCode/UDeepSC_Base/pretrained_models/bert-{mode}"
+        # self.text_encoder = BertModel.from_pretrained(bert_ckpt)
+        
         bert_ckpt = f"/prajjwal1/bert-{mode}"
         text_encoder_pretrained = BertModel.from_pretrained(bert_ckpt)
 
@@ -334,57 +336,75 @@ class UDeepSC_M2(nn.Module):
         if text is not None:
             x_text = self.text_encoder(text, ta_perform)[0]
             if ta_perform.startswith('textc'):
-                x_text_before_ch = x_text[:,0,:].unsqueeze(1)
+                x_text = x_text[:,0,:].unsqueeze(1)
                 encoder_to_channel = self.textc_encoder_to_channel
                 channel_to_decoder = self.textc_channel_to_decoder
             elif ta_perform.startswith('textr'):
-                x_text_before_ch = x_text[:,1:-1,:]  
+                x_text = x_text[:,1:-1,:]  
                 encoder_to_channel = self.textr_encoder_to_channel
                 channel_to_decoder = self.textr_channel_to_decoder
             elif ta_perform.startswith('vqa'):
-                x_text_before_ch = x_text[:,0:2,:]
+                x_text = x_text[:,0:2,:]
                 encoder_to_channel = self.vqa_text_encoder_to_channel
                 channel_to_decoder = self.vqa_text_channel_to_decoder
             elif ta_perform.startswith('msa'):
-                x_text_before_ch = x_text[:,-2:-1,:]
+                x_text = x_text[:,-2:-1,:]
                 encoder_to_channel = self.msa_text_encoder_to_channel
                 channel_to_decoder = self.msa_text_channel_to_decoder
             
-            x_text = self.transmit(x_text_before_ch, noise_snr,encoder_to_channel, channel_to_decoder)
+            # x_text = self.transmit(x_text_before_ch, noise_snr,encoder_to_channel, channel_to_decoder)
+            
+            x_text = encoder_to_channel(x_text)
+            x_text_before_ch = power_norm_batchwise(x_text)
+            x_text = tensor_real2complex(x_text_before_ch, 'concat')
+            x_text = self.channel.AWGN(x_text, SNRdb.item())
+            x_text = tensor_complex2real(x_text, 'concat')
             
             signals['text'] = [x_text_before_ch, x_text]
             
         if img is not None:
             x_img = self.img_encoder(img, ta_perform)
             if ta_perform.startswith('imgc'):
-                x_img_before_ch = x_img[:,0,:].unsqueeze(1)
+                x_img = x_img[:,0,:].unsqueeze(1)
                 encoder_to_channel = self.imgc_encoder_to_channel
                 channel_to_decoder = self.imgc_channel_to_decoder
                 
             elif ta_perform.startswith('imgr'):
-                x_img_before_ch = x_img[:,1:-1,:]
+                x_img = x_img[:,1:-1,:]
                 encoder_to_channel = self.imgr_encoder_to_channel
                 channel_to_decoder = self.imgr_channel_to_decoder
                 
             elif ta_perform.startswith('vqa'):
-                x_img_before_ch = x_img[:,0:3,:]
+                x_img = x_img[:,0:3,:]
                 encoder_to_channel = self.vqa_img_encoder_to_channel
                 channel_to_decoder = self.vqa_img_channel_to_decoder
                 
             elif ta_perform.startswith('msa'):
-                x_img_before_ch = x_img[:,0,:].unsqueeze(1)
+                x_img = x_img[:,0,:].unsqueeze(1)
                 encoder_to_channel = self.msa_img_encoder_to_channel
                 channel_to_decoder = self.msa_img_channel_to_decoder
     
-            x_img = self.transmit(x_img_before_ch, noise_snr,encoder_to_channel, channel_to_decoder)
+            # x_img = self.transmit(x_img_before_ch, noise_snr,encoder_to_channel, channel_to_decoder)
+            
+            x_img = encoder_to_channel(x_img)
+            x_img_before_ch = power_norm_batchwise(x_img)
+            x_img = tensor_real2complex(x_img_before_ch, 'concat')
+            x_img = self.channel.AWGN(x_img, SNRdb.item())
+            x_img = tensor_complex2real(x_img, 'concat')
             
             signals['img'] = [x_img_before_ch, x_img]
         
         if speech is not None:
             x_spe = self.spe_encoder(speech, ta_perform)
-            x_spe_before_ch = x_spe[:,0,:].unsqueeze(1)
+            x_spe = x_spe[:,0,:].unsqueeze(1)
            
-            x_spe = self.transmit(x_spe_before_ch, noise_snr, self.msa_spe_encoder_to_channel, self.msa_spe_channel_to_decoder)
+            # x_spe = self.transmit(x_spe_before_ch, noise_snr, self.msa_spe_encoder_to_channel, self.msa_spe_channel_to_decoder)
+            
+            x_spe = self.msa_spe_encoder_to_channel(x_spe)
+            x_spe_before_ch = power_norm_batchwise(x_spe)
+            x_spe = tensor_real2complex(x_spe_before_ch, 'concat')
+            x_spe = self.channel.AWGN(x_spe, SNRdb.item())
+            x_spe = tensor_complex2real(x_spe, 'concat')
             
             signals['spe'] = [x_spe_before_ch, x_spe]
             
@@ -706,7 +726,7 @@ def UDeepSC_new_model(pretrained=False, **kwargs):
         img_size=32,
         patch_size=4,
         img_embed_dim=384,
-        text_embed_dim=384,
+        text_embed_dim=512,
         speech_embed_dim=128,
         img_encoder_depth=6,
         text_encoder_depth=4,

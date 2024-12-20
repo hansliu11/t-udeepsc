@@ -17,6 +17,7 @@ from datasets import build_dataset_train, build_dataset_test, BatchSchedulerSamp
 
 ## 0 -> 2 1 -> 1 2 -> 0 3 -> 3
 # os.environ['CUDA_VISIBLE_DEVICES'] = '1'
+# os.environ['WANDB_MODE'] = 'disabled'
 
 ############################################################
 def wandbConfig_initial(args):
@@ -26,7 +27,7 @@ def wandbConfig_initial(args):
     config.lr = args.lr  
     config.use_cuda = (True if (torch.cuda.is_available() and args.device == 'cuda') else False)  
     config.seed = args.seed  
-    config.log_interval = args.log_interval
+    config.log_interval = args.log_interval  
 
 
 def seed_initial(seed=0):
@@ -45,7 +46,7 @@ def main(args):
     seed_initial(seed=args.seed)
     
     ### wanb init
-    wandb.init(project="udeepsc", name="textr_test")
+    wandb.init(project="udeepsc", name="test_textr_loss_(SNR=12)")
     wandbConfig_initial(args)
     ####################################### Get the model
     model = get_model(args)
@@ -68,7 +69,7 @@ def main(args):
     '''
         ta_sel: select the task for training
     '''
-    # ta_sel = ['imgr', 'textr', 'textc']
+    # ta_sel = ['vqa', 'textc', 'textr']
     ta_sel = ['imgr', 'textr']
     trainset_group = build_dataset_train(is_train=True, ta_sel=ta_sel, args=args)
     trainloader_group= build_dataloader(ta_sel,trainset_group, args=args)

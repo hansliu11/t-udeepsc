@@ -33,8 +33,7 @@ def get_best_checkpoint(folder: Path, label="checkpoint"):
 
     return path       
 
-def get_sample_text(args):
-    batch_size = 5
+def get_sample_text(args, batch_size=5):
     testset = build_dataset_test(is_train=False, args=args)
     sampler_test = torch.utils.data.SequentialSampler(testset)
     test_dataloader= torch.utils.data.DataLoader(
@@ -48,8 +47,11 @@ def get_sample_text(args):
 def text_test(ta_perform:str, texts:list[str], snr:torch.FloatTensor, model, device):
     logger.info("Start test textr")
     
+    batch_size = texts.size(0)
+    bleu_meter = AverageMeter()
+    
     texts = texts.to(device)
-    model.training = False ## set model test mode
+    model.eval() ## set model test mode
     outputs = model(text=texts, ta_perform=ta_perform, test_snr=snr)
     
     texts = texts[:,1:]
@@ -59,12 +61,14 @@ def text_test(ta_perform:str, texts:list[str], snr:torch.FloatTensor, model, dev
     
     preds = tokens2sentence(preds)
     texts = tokens2sentence(texts)
-    
+    bleu_meter.update(computebleu(preds, texts)/batch_size, n=batch_size)
     print(f'Test at SNR = {snr.item()} db')
     for i, (pred, target) in enumerate(zip(preds, texts)):
-        print(f'Sentence {i + 1}')
-        print('Transmitted: ' + ' '.join(target[:-1]))
-        print('Recovered: ' + ' '.join(pred[:-1]))
+        if i % 5 == 0:
+            print(f'Sentence {i + 1}')
+            print('Transmitted: ' + ' '.join(target[:-1]))
+            print('Recovered: ' + ' '.join(pred[:-1]))
+            print(f'Bleu Score: {bleu_meter.avg:.3f}')
     
     return preds
 
@@ -72,6 +76,7 @@ def text_test_single(ta_perform:str, text, snr:torch.FloatTensor, model, device)
     logger.info("Start test textr")
     
     texts = texts.to(device)
+    model.eval()
     outputs = model(text=texts, ta_perform=ta_perform, test_snr=snr)
     
     text = text[1:]
@@ -135,7 +140,7 @@ def test_SNR(ta_perform:str, SNRrange:list[int], model_path, args,device, datase
         batch_size = texts.size(0)
         avg_bleu = []
         bleu_meter = AverageMeter()
-        for i in range(SNRrange[0], SNRrange[1] + 2, 2):
+        for i in range(SNRrange[0], SNRrange[1]):
             snr = torch.FloatTensor([i])
             logger.info(f"Test SNR = {snr}")
             outputs = model(text=texts, ta_perform=ta_perform, test_snr=snr)
@@ -163,7 +168,7 @@ def test_features(ta:str, test_snr: torch.FloatTensor, model_path, args,device, 
     checkpoint_model = load_checkpoint(model, args)
     load_state_dict(model, checkpoint_model, prefix=args.model_prefix)
     
-    # Need modify
+    # TODO Need modify
     if ta.startswith('img'):
         imgs = dataset[0].to(device, non_blocking=True)
         targets = dataset[1].to(device, non_blocking=True)
@@ -182,6 +187,7 @@ def test_features(ta:str, test_snr: torch.FloatTensor, model_path, args,device, 
     else:
         raise NotImplementedError()
     
+    model.eval()
     signals = model.get_signals(text=texts, ta_perform=ta, SNRdb=test_snr)
     text_signals_before, text_signals_after = signals['text']
     batch_size = text_signals_before.shape[0]
@@ -239,7 +245,7 @@ def main_test_textr_SNR():
         task_fold = 'textc'
     elif ta_perform.startswith('textr'):
         task_fold = 'ckpt_textr'
-        task_fold = 'textr_smooth_005'
+        task_fold = 'textr_smooth_01'
     elif ta_perform.startswith('vqa'):
         task_fold = 'vqa'
     elif ta_perform.startswith('msa'):
@@ -258,14 +264,14 @@ def main_test_textr_SNR():
     opts.model = 'UDeepSC_new_model'
     opts.ta_perform = ta_perform
     
-    texts, targets = get_sample_text(opts)
+    texts, targets = get_sample_text(opts, batch_size=32)
     SNRrange = [-6, 12]
     
     snr12_bleus = test_SNR(ta_perform, SNRrange, best_model_path1, opts, device, [texts, targets])
     
     snrNeg_bleus = test_SNR(ta_perform, SNRrange, best_model_path2, opts, device, [texts, targets])
     
-    print(snr12_bleus)
+    # print(snr12_bleus)
     
     x = [i for i in range(SNRrange[0], SNRrange[1] + 2, 2)]
     models = [snr12_bleus, snrNeg_bleus]
@@ -285,7 +291,7 @@ def main_test1():
         task_fold = 'textc'
     elif ta_perform.startswith('textr'):
         task_fold = 'ckpt_textr'
-        task_fold = 'textr_smooth_005'
+        task_fold = 'textr_smooth_01'
     elif ta_perform.startswith('vqa'):
         task_fold = 'vqa'
     elif ta_perform.startswith('msa'):
@@ -305,15 +311,15 @@ def main_test1():
     
     # text = "Jack lives in HsinChu and he is 25 years old"
     
-    inputs, _ = get_sample_text(opts)
+    inputs, _ = get_sample_text(opts, batch_size=32)
     
     # SNR for testing, default = 12
     # range: [-6, 12]
-    test_snr = torch.FloatTensor([-2])
+    test_snr = torch.FloatTensor([12])
     
     received = text_test(ta_perform, inputs, test_snr, model, device)
 
 if __name__ == '__main__':
-    main_test1()
-    # main_test_textr_SNR()
+    # main_test1()
+    main_test_textr_SNR()
     # main_test_signals()
