@@ -1,10 +1,9 @@
 import torch
-import math
 import torch.nn as nn
 from pathlib import Path
 from loguru import logger
 import re
-from pytorch_transformers import BertTokenizer
+from transformers import BertTokenizer
 
 import model  
 from utils import *
@@ -44,6 +43,14 @@ def get_sample_text(args, batch_size=5):
     print(str_type(inputs))
     return inputs, targets
 
+def rpad(array, n=70):
+    """Right padding."""
+    current_len = len(array)
+    if current_len > n:
+        return array[: n - 1]
+    extra = n - current_len
+    return array + ([0] * extra)
+
 def text_test(ta_perform:str, texts:list[str], snr:torch.FloatTensor, model, device):
     logger.info("Start test textr")
     
@@ -63,35 +70,38 @@ def text_test(ta_perform:str, texts:list[str], snr:torch.FloatTensor, model, dev
     texts = tokens2sentence(texts)
     bleu_meter.update(computebleu(preds, texts)/batch_size, n=batch_size)
     print(f'Test at SNR = {snr.item()} db')
+    print(f'Avg Bleu Score: {bleu_meter.avg:.3f}')
     for i, (pred, target) in enumerate(zip(preds, texts)):
         if i % 5 == 0:
             print(f'Sentence {i + 1}')
             print('Transmitted: ' + ' '.join(target[:-1]))
             print('Recovered: ' + ' '.join(pred[:-1]))
-            print(f'Bleu Score: {bleu_meter.avg:.3f}')
     
     return preds
 
 def text_test_single(ta_perform:str, text, snr:torch.FloatTensor, model, device):
     logger.info("Start test textr")
     
-    texts = texts.to(device)
+    text = text.to(device)
     model.eval()
-    outputs = model(text=texts, ta_perform=ta_perform, test_snr=snr)
+    outputs = model(text=text, ta_perform=ta_perform, test_snr=snr)
     
-    text = text[1:]
-    preds = torch.zeros_like(text)
-    for i in range(outputs.shape):
-        preds[i] = outputs[i].max(-1)[-1] 
+    text = text[:,1:]
+    pred = torch.zeros_like(text)
+    for i in range(outputs.shape[1]):
+        pred[:, i] = outputs[:,i].max(-1)[-1] 
     
-    preds = tokens2sentence(preds)
-    texts = tokens2sentence(texts)
-    for i, (pred, target) in enumerate(zip(preds, texts)):
-        print(f'Sentence {i + 1}')
-        print('Transmitted: ' + ' '.join(target[:-1]))
-        print('Recovered: ' + ' '.join(pred[:-1]))
+    pred = tokens2sentence(pred)
+    text = tokens2sentence(text)
+    bleu_score = computebleu(pred, text)
     
-    return preds
+    print(f'Test at SNR = {snr.item()} db')
+    # for i, (pred, target) in enumerate(zip(preds, text)):
+    print('Transmitted: ' + ' '.join(text[0][:-1]))
+    print('Recovered: ' + ' '.join(pred[0][:-1]))
+    print(f'Bleu Score: {bleu_score:.3f}')
+    
+    return pred
 
 def test_SNR(ta_perform:str, SNRrange:list[int], model_path, args,device, dataset):
     """
@@ -118,7 +128,7 @@ def test_SNR(ta_perform:str, SNRrange:list[int], model_path, args,device, datase
         psnr_meter = AverageMeter()
         psnr_list = []
         
-        for i in range(SNRrange[0], SNRrange[1] + 2, 2):
+        for i in range(SNRrange[0], SNRrange[1] + 1):
             snr = torch.FloatTensor([i])
             logger.info(f"Test SNR = {snr}")
             outputs = model(img=imgs, ta_perform=ta_perform, test_SNR=snr)
@@ -140,7 +150,7 @@ def test_SNR(ta_perform:str, SNRrange:list[int], model_path, args,device, datase
         batch_size = texts.size(0)
         avg_bleu = []
         bleu_meter = AverageMeter()
-        for i in range(SNRrange[0], SNRrange[1]):
+        for i in range(SNRrange[0], SNRrange[1] + 1):
             snr = torch.FloatTensor([i])
             logger.info(f"Test SNR = {snr}")
             outputs = model(text=texts, ta_perform=ta_perform, test_snr=snr)
@@ -273,7 +283,7 @@ def main_test_textr_SNR():
     
     # print(snr12_bleus)
     
-    x = [i for i in range(SNRrange[0], SNRrange[1] + 2, 2)]
+    x = [i for i in range(SNRrange[0], SNRrange[1] + 1)]
     models = [snr12_bleus, snrNeg_bleus]
     labels = ["Textr-LSCE (SNR = 12)", "Textr-LSCE (SNR = -2)"]
     draw_line_chart(x, models, labels, "AWGN","SNR/db", "Bleu score", output="bleu_SNR")
@@ -298,7 +308,7 @@ def main_test1():
         task_fold = 'msa'
 
     folder = Path('./output'+ '/' + task_fold)
-    best_model_path = get_best_checkpoint(folder, 'snr12')
+    best_model_path = get_best_checkpoint(folder, 'snr12new')
     print(f'{best_model_path = }')
     opts.model = 'UDeepSC_new_model'
     opts.resume = best_model_path
@@ -318,8 +328,52 @@ def main_test1():
     test_snr = torch.FloatTensor([12])
     
     received = text_test(ta_perform, inputs, test_snr, model, device)
+    
+def main_test_single():
+    opts = get_args()
+    ta_perform = 'textr'
+    device = 'cpu'
+    
+    if ta_perform.startswith('imgc'):
+        task_fold = 'imgc'
+    elif ta_perform.startswith('imgr'):
+        task_fold = 'imgr'
+    elif ta_perform.startswith('textc'):
+        task_fold = 'textc'
+    elif ta_perform.startswith('textr'):
+        task_fold = 'ckpt_textr'
+        task_fold = 'textr_smooth_01'
+    elif ta_perform.startswith('vqa'):
+        task_fold = 'vqa'
+    elif ta_perform.startswith('msa'):
+        task_fold = 'msa'
+
+    folder = Path('./output'+ '/' + task_fold)
+
+    best_model_path = get_best_checkpoint(folder, 'snr12new')
+    print(f'{best_model_path = }')
+    opts.model = 'UDeepSC_new_model'
+    opts.resume = best_model_path
+    opts.ta_perform = ta_perform
+    
+    model = get_model(opts)
+    print(f'{opts.resume = }')
+    checkpoint_model = load_checkpoint(model, opts)
+    load_state_dict(model, checkpoint_model, prefix=opts.model_prefix)
+    
+    tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
+    text = "Water boils at 100 degrees Celsius under normal conditions."
+    text =  torch.tensor(rpad(tokenizer.encode(text, add_special_tokens=True), n=66)).unsqueeze(0)
+    print(text.shape)
+
+    # SNR for testing, default = 12
+    # range: [-6, 12]
+    test_snr = torch.FloatTensor([12])
+    
+    received = text_test_single(ta_perform, text, test_snr, model, device)
 
 if __name__ == '__main__':
     # main_test1()
-    main_test_textr_SNR()
+    main_test_single()
+    # main_test_textr_SNR()
     # main_test_signals()

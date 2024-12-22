@@ -273,8 +273,10 @@ def draw_line_chart(x, y_lists, labels=None, title="Line Chart", xlabel="X-axis"
         plt.plot(x, y, marker='o', linestyle='-', label=label)  # Plot each line
     
     # Set titles and labels
+    x_tick = np.arange(x[0], x[-1] + 1, 2)
+    
     plt.title(title, fontsize = 16)
-    plt.xticks(x, labels=x)
+    plt.xticks(x_tick, labels=x_tick)
     plt.xlabel(xlabel, fontsize=16)
     plt.ylabel(ylabel, fontsize=16)
     # Modify tick label size
