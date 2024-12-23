@@ -283,9 +283,6 @@ def draw_line_chart(x, y_lists, labels=None, title="Line Chart", xlabel="X-axis"
     plt.tick_params(axis='both', which='major', labelsize=14)
     
     plt.grid(True)  # Add grid lines
-
-    # Set the min and max y-axis ticks
-    # plt.gca().set_ylim(0.3, 1.0)  # Minimum at 15 and maximum at 45
     
     # Add a legend to distinguish the lines
     plt.legend()
@@ -294,7 +291,25 @@ def draw_line_chart(x, y_lists, labels=None, title="Line Chart", xlabel="X-axis"
     
     plt.savefig(output + '.png')
     
+
+def draw_threshold_bars(data, threshold, title, xlabel,  ylabel, output):
+    plt.figure(figsize=(6, 7))  # Set the figure size
     
+    # 計算大於 threshold 和小於 threshold 的數量
+    greater_than_threshold = sum(1 for value in data if value > threshold)
+    less_than_threshold = len(data) - greater_than_threshold  # 小於 threshold 的數量
+
+    # 繪製柱狀圖
+    plt.bar([f'Greater than {threshold}', f'Less than {threshold}'], [greater_than_threshold, less_than_threshold], color=['y', 'y'], width=0.5)
+
+    # 標題和標籤
+    plt.title(title)
+    plt.xlabel(xlabel)
+    plt.ylabel(ylabel)
+
+    # 顯示圖表
+    plt.savefig(output + '.png')
+
 def train_log(epoch, loss_all:dict):
     log_data = {"epoch": epoch}
     for ta, loss in loss_all.items():
@@ -615,26 +630,39 @@ def calc_ssim(predictions, targets):
 import nltk
 from pytorch_transformers import BertTokenizer
 from nltk.translate.bleu_score import sentence_bleu
+from bert_score import score
 
 tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
 def tokens2sentence(outputs):
+    """
+        This methode decode token by token
+    """
     sentences = []
     #print(outputs)
     for tokens in outputs:
-        # sentence = []
-        # for token in tokens:
+        sentence = []
+        for token in tokens:
             
-        #     word = tokenizer.decode([int(token)])
+            word = tokenizer.decode([int(token)])
  
-        #     if word == '[PAD]':
-        #         break
-        #     sentence.append(word)
-        
+            if word == '[PAD]':
+                break
+            sentence.append(word)
+        sentences.append(sentence)
+    return sentences  
+ 
+def tokens2sentenceV2(outputs):
+    """
+        This methode decode whole sentence of tokens into human-readable text without the "##" at a time
+    """
+    sentences = []
+    #print(outputs)
+    for tokens in outputs:
         tokens = tokens.tolist()
         tokens = tokenizer.decode(tokens)
         sentence = tokens[0].split(" ")
         sentences.append(sentence)
-    return sentences  
+    return sentences 
  
 def computebleu(sentences, targets):
   score = 0 
@@ -656,7 +684,10 @@ def computebleu(sentences, targets):
     score += sentence_bleu([target], sentence, weights=(1, 0, 0, 0))                                                                                          
   return score
 
-
+def computBertScore(sentences, targets):
+    assert (len(sentences) == len(targets))
+    P, R, F1 = score(sentences, targets, lang="en", verbose=True)                     
+    return F1
 
 def calc_metrics(y_true, y_pred, mode=None, to_print=True):
     """

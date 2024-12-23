@@ -1,9 +1,9 @@
 import torch
-import torch.nn as nn
 from pathlib import Path
 from loguru import logger
 import re
 from transformers import BertTokenizer
+from tqdm import tqdm
 
 import model  
 from utils import *
@@ -11,6 +11,8 @@ from base_args import get_args
 from timm.utils import AverageMeter
 from einops import rearrange
 from datasets import build_dataset_test
+from torch.utils.data import Subset
+import matplotlib.pyplot as plt
 
 def get_best_checkpoint(folder: Path, label="checkpoint"):
     """
@@ -32,7 +34,8 @@ def get_best_checkpoint(folder: Path, label="checkpoint"):
 
     return path       
 
-def get_sample_text(args, batch_size=5):
+def get_test_samples(args, batch_size=5):
+    """Get first "batch size" of test sample data in dataloader"""
     testset = build_dataset_test(is_train=False, args=args)
     sampler_test = torch.utils.data.SequentialSampler(testset)
     test_dataloader= torch.utils.data.DataLoader(
@@ -42,6 +45,21 @@ def get_sample_text(args, batch_size=5):
     inputs, targets = next(iter(test_dataloader))
     print(str_type(inputs))
     return inputs, targets
+
+def get_test_dataloader(args, batch_size=5):
+    """Return testset and test dataloader"""
+    testset = build_dataset_test(is_train=False, args=args)
+    if args.textr_euro:
+        indices = list(range(batch_size * 1000))
+        testset = Subset(testset, indices)
+    sampler_test = torch.utils.data.SequentialSampler(testset)
+    test_dataloader= torch.utils.data.DataLoader(
+        testset, sampler=sampler_test, batch_size=int(1.0 * batch_size),
+        num_workers=4, pin_memory=args.pin_mem, drop_last=False)
+    
+        
+    
+    return testset, test_dataloader
 
 def rpad(array, n=70):
     """Right padding."""
@@ -66,8 +84,8 @@ def text_test(ta_perform:str, texts:list[str], snr:torch.FloatTensor, model, dev
     for i in range(outputs.shape[1]):
         preds[:,i] = outputs[:,i].max(-1)[-1] 
     
-    preds = tokens2sentence(preds)
-    texts = tokens2sentence(texts)
+    preds = tokens2sentenceV2(preds)
+    texts = tokens2sentenceV2(texts)
     bleu_meter.update(computebleu(preds, texts)/batch_size, n=batch_size)
     print(f'Test at SNR = {snr.item()} db')
     print(f'Avg Bleu Score: {bleu_meter.avg:.3f}')
@@ -91,8 +109,8 @@ def text_test_single(ta_perform:str, text, snr:torch.FloatTensor, model, device)
     for i in range(outputs.shape[1]):
         pred[:, i] = outputs[:,i].max(-1)[-1] 
     
-    pred = tokens2sentence(pred)
-    text = tokens2sentence(text)
+    pred = tokens2sentenceV2(pred)
+    text = tokens2sentenceV2(text)
     bleu_score = computebleu(pred, text)
     
     print(f'Test at SNR = {snr.item()} db')
@@ -102,6 +120,40 @@ def text_test_single(ta_perform:str, text, snr:torch.FloatTensor, model, device)
     print(f'Bleu Score: {bleu_score:.3f}')
     
     return pred
+
+def text_test_BLEU(ta_perform:str, textLoader: Iterable, snr:torch.FloatTensor, model, device):
+    logger.info("Start test textr")
+    
+    bleu_meter = AverageMeter()
+    result = [] ## bleu score of each sentence
+    
+    model.eval() ## set model test mode
+    print(f'Test at SNR = {snr.item()} db')
+    for (texts, targets) in tqdm(textLoader):
+        texts, targets = texts.to(device), targets.to(device)
+        batch_size = targets.size(0)
+        
+        outputs = model(text=texts, ta_perform=ta_perform, test_snr=snr)
+        
+        targets = targets[:,1:]
+        preds = torch.zeros_like(targets)
+        for i in range(outputs.shape[1]):
+            preds[:,i] = outputs[:,i].max(-1)[-1] 
+        
+        preds = tokens2sentence(preds)
+        targets = tokens2sentence(targets)
+        
+        for pred, target in zip(preds, targets):
+            # print(f'Pred: {len(pred)}')
+            # print(f'Tar: {len(target)}')
+            result.append(computebleu([pred], [target]))
+        
+        bleu_meter.update(computebleu(preds, targets)/batch_size, n=batch_size)
+            
+    test_stat = {'bleu': result, 'average': bleu_meter.avg}  
+    
+    return test_stat
+
 
 def test_SNR(ta_perform:str, SNRrange:list[int], model_path, args,device, dataset):
     """
@@ -237,7 +289,7 @@ def main_test_signals():
     opts.model = 'UDeepSC_new_model'
     opts.ta_perform = ta_perform
     
-    texts, targets = get_sample_text(opts)
+    texts, targets = get_test_samples(opts)
     test_snr = torch.FloatTensor([12])
     
     signals = test_features(ta_perform, test_snr, best_model_path1, opts, device, [texts, targets])
@@ -274,7 +326,7 @@ def main_test_textr_SNR():
     opts.model = 'UDeepSC_new_model'
     opts.ta_perform = ta_perform
     
-    texts, targets = get_sample_text(opts, batch_size=32)
+    texts, targets = get_test_samples(opts, batch_size=50)
     SNRrange = [-6, 12]
     
     snr12_bleus = test_SNR(ta_perform, SNRrange, best_model_path1, opts, device, [texts, targets])
@@ -288,7 +340,7 @@ def main_test_textr_SNR():
     labels = ["Textr-LSCE (SNR = 12)", "Textr-LSCE (SNR = -2)"]
     draw_line_chart(x, models, labels, "AWGN","SNR/db", "Bleu score", output="bleu_SNR")
 
-def main_test1():
+def main_test1(test_bleu=False):
     opts = get_args()
     ta_perform = 'textr'
     device = 'cpu'
@@ -319,13 +371,51 @@ def main_test1():
     checkpoint_model = load_checkpoint(model, opts)
     load_state_dict(model, checkpoint_model, prefix=opts.model_prefix)
     
-    # text = "Jack lives in HsinChu and he is 25 years old"
-    
-    inputs, _ = get_sample_text(opts, batch_size=32)
-    
     # SNR for testing, default = 12
     # range: [-6, 12]
     test_snr = torch.FloatTensor([12])
+
+    # using europarl dataset
+    # opts.textr_euro = True
+    dataset_N = "SST-2"
+    
+    if(test_bleu):
+        testset, dataloader = get_test_dataloader(opts, batch_size=32)
+
+        
+        test_stats = text_test_BLEU(ta_perform, dataloader, test_snr, model, device)
+        
+        def draw_BLEU_chart(bleus):
+            plt.figure(figsize=(13, 7))  # Set the figure size
+            
+            x = [i for i in range(len(testset))]
+            
+            plt.plot(x, bleus, linestyle='-', label="Bleu score")
+            
+            x_tick = np.arange(x[0], x[-1] + 1, 500)
+            
+            plt.title(f"BLEU Score for {dataset_N} Dataset", fontsize = 14)
+            plt.xticks(x_tick, labels=x_tick)
+            plt.xlabel("Index", fontsize=12)
+            plt.ylabel("Bleu score", fontsize=12)
+            # Modify tick label size
+            plt.tick_params(axis='both', which='major', labelsize=14)
+            
+            plt.grid(True)  # Add grid lines
+            
+            # Add a legend to distinguish the lines
+            plt.legend()
+            plt.tight_layout()  # Adjust layout to fit elements properly
+            
+            plt.savefig(f"bleu_{dataset_N}" + '.png') 
+
+        draw_BLEU_chart(test_stats['bleu'])
+        draw_threshold_bars(test_stats['bleu'], 0.9, "Distribution of BLEU score", "BLEU Score", "Count", f"bleu_count_{dataset_N}")
+        print(f"Average BLEU on the {len(testset)} test samples: {test_stats['average']:.3f}")
+    
+        return
+    
+    inputs, _ = get_test_samples(opts, batch_size=5)
     
     received = text_test(ta_perform, inputs, test_snr, model, device)
     
@@ -373,7 +463,7 @@ def main_test_single():
     received = text_test_single(ta_perform, text, test_snr, model, device)
 
 if __name__ == '__main__':
-    # main_test1()
-    main_test_single()
+    main_test1(True)
+    # main_test_single()
     # main_test_textr_SNR()
     # main_test_signals()

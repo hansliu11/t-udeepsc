@@ -95,5 +95,6 @@ def get_args():
                         type=str, help='Eval Data')
     parser.add_argument('--log_interval', default=10, type=int, help='logging interval for wandb')
 
+    parser.add_argument('--textr_euro',action='store_true', help='Use Europarl as textr testing dataset')
 
     return parser.parse_args()

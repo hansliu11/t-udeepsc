@@ -7,11 +7,11 @@ import torch.utils.data as data
 
 
 from transformers import BertTokenizer
-from data import CIFAR_CR,SST_CR
+from data import CIFAR_CR,SST_CR, EUROP_CR
 from timm.data import create_transform
 from vqa_utils import VQA2, Config_VQA
 from torch.nn.utils.rnn import pad_sequence
-from torchvision import datasets, transforms
+from torchvision import transforms
 from msa_utils import PAD, Config_MSA, MSA
 # from pytorch_transformers import BertTokenizer
 from torch.utils.data.sampler import RandomSampler
@@ -104,7 +104,10 @@ def build_dataset_test(is_train, args):
         dataset = SST_CR(root=False, train=is_train, binary=True, if_class=True)
 
     elif args.ta_perform.startswith('textr'):
-        dataset = SST_CR(root=True, train=is_train, binary=True, if_class=False)
+        if args.textr_euro:
+            dataset = EUROP_CR(train=is_train)
+        else:
+            dataset = SST_CR(root=True, train=is_train, binary=True, if_class=False)
 
     elif args.ta_perform.startswith('vqa'):
         config_vqa = Config_VQA()
