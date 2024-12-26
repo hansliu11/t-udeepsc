@@ -90,7 +90,7 @@ def text_test(ta_perform:str, texts:list[str], snr:torch.FloatTensor, model, dev
     print(f'Test at SNR = {snr.item()} db')
     print(f'Avg Bleu Score: {bleu_meter.avg:.3f}')
     for i, (pred, target) in enumerate(zip(preds, texts)):
-        if i % 5 == 0:
+        if i < 5:
             print(f'Sentence {i + 1}')
             print('Transmitted: ' + ' '.join(target[:-1]))
             print('Recovered: ' + ' '.join(pred[:-1]))
@@ -155,7 +155,7 @@ def text_test_BLEU(ta_perform:str, textLoader: Iterable, snr:torch.FloatTensor, 
     return test_stat
 
 
-def test_SNR(ta_perform:str, SNRrange:list[int], model_path, args,device, dataset):
+def test_SNR(ta_perform:str, SNRrange:list[int], model_path, args,device, dataloader:Iterable):
     """
     TODO
     Test model on different SNR
@@ -173,49 +173,55 @@ def test_SNR(ta_perform:str, SNRrange:list[int], model_path, args,device, datase
     load_state_dict(model, checkpoint_model, prefix=args.model_prefix)
     
     model.eval()
-    if ta_perform.startswith('imgr'):
-        imgs, targets = dataset
-        imgs = imgs.to(device)
-        batch_size = imgs.size(0)
-        psnr_meter = AverageMeter()
+    if ta_perform.startswith('imgr'):    
         psnr_list = []
-        
         for i in range(SNRrange[0], SNRrange[1] + 1):
-            snr = torch.FloatTensor([i])
-            logger.info(f"Test SNR = {snr}")
-            outputs = model(img=imgs, ta_perform=ta_perform, test_SNR=snr)
-            outputs = rearrange(outputs, 'b n (p c) -> b n p c', c=3)
-            outputs = rearrange(outputs, 'b (h w) (p1 p2) c -> b c (h p1) (w p2)', p1=4, p2=4, h=8, w=8)
-        
-            predictions = torch.chunk(outputs, chunks=outputs.size(0), dim=0)
-            targets = torch.chunk(imgs, chunks=imgs.size(0), dim=0)
-            psnr_vals = calc_psnr(predictions, targets)
-            psnr_list.extend(psnr_vals)
-            psnr_meter.update(torch.mean(torch.tensor(psnr_vals)).item(), n=batch_size)
+            psnr_meter = AverageMeter()
+            for (imgs, targets) in tqdm(dataloader):
+                imgs, targets = imgs.to(device), targets.to(device)
+                batch_size = imgs.size(0)
+                
+                
+                snr = torch.FloatTensor([i])
+                logger.info(f"Test SNR = {snr}")
+                outputs = model(img=imgs, ta_perform=ta_perform, test_SNR=snr)
+                outputs = rearrange(outputs, 'b n (p c) -> b n p c', c=3)
+                outputs = rearrange(outputs, 'b (h w) (p1 p2) c -> b c (h p1) (w p2)', p1=4, p2=4, h=8, w=8)
             
+                predictions = torch.chunk(outputs, chunks=outputs.size(0), dim=0)
+                targets = torch.chunk(imgs, chunks=imgs.size(0), dim=0)
+                psnr_vals = calc_psnr(predictions, targets)
+                psnr_list.extend(psnr_vals)
+                psnr_meter.update(torch.mean(torch.tensor(psnr_vals)).item(), n=batch_size)
+                
             psnr_list.append(psnr_meter.avg)
         
         return psnr_list
     
-    elif ta_perform.startswith('textr'):
-        texts, _ = dataset
-        batch_size = texts.size(0)
+    elif ta_perform.startswith('textr'):   
         avg_bleu = []
-        bleu_meter = AverageMeter()
-        for i in range(SNRrange[0], SNRrange[1] + 1):
-            snr = torch.FloatTensor([i])
-            logger.info(f"Test SNR = {snr}")
-            outputs = model(text=texts, ta_perform=ta_perform, test_snr=snr)
-        
-            targets = texts[:,1:]
-            preds = torch.zeros_like(targets)
-            for i in range(outputs.shape[1]):
-                preds[:,i] = outputs[:,i].max(-1)[-1] 
+        for snr in range(SNRrange[0], SNRrange[1] + 1):
+            bleu_meter = AverageMeter()
+            for (texts, targets) in tqdm(dataloader):
+                batch_size = texts.size(0)
+                texts, targets = texts.to(device), targets.to(device)
+                
+                snr = torch.FloatTensor([snr])
+                
+                logger.info(f"Test SNR = {snr}")
+                outputs = model(text=texts, ta_perform=ta_perform, test_snr=snr)
             
-            preds = tokens2sentence(preds)
-            targets = tokens2sentence(targets)
-            bleu_meter.update(computebleu(preds, targets)/batch_size, n=batch_size)
-            
+                targets = texts[:,1:]
+                preds = torch.zeros_like(targets)
+                for i in range(outputs.shape[1]):
+                    preds[:,i] = outputs[:,i].max(-1)[-1] 
+                
+                preds = tokens2sentence(preds)
+                targets = tokens2sentence(targets)
+                
+                # bleu = computebleu(preds, targets) / batch_size
+                bleu_meter.update(computebleu(preds, targets)/batch_size, n=batch_size)
+                
             avg_bleu.append(bleu_meter.avg)
         
         return avg_bleu
@@ -316,22 +322,22 @@ def main_test_textr_SNR():
     folder = Path('./output'+ '/' + task_fold)
     
     # test model trained on snr 12
-    best_model_path1 = get_best_checkpoint(folder, "snr12")
+    best_model_path1 = get_best_checkpoint(folder, "snr12new")
     print(f'{best_model_path1 = }')
     
     # test model trained on snr -2
-    best_model_path2 = get_best_checkpoint(folder, "snr-2")
+    best_model_path2 = get_best_checkpoint(folder, "snr-2new")
     print(f'{best_model_path2 = }')
     
     opts.model = 'UDeepSC_new_model'
     opts.ta_perform = ta_perform
     
-    texts, targets = get_test_samples(opts, batch_size=50)
+    testset, dataloader = get_test_dataloader(opts, batch_size=32)
     SNRrange = [-6, 12]
     
-    snr12_bleus = test_SNR(ta_perform, SNRrange, best_model_path1, opts, device, [texts, targets])
+    snr12_bleus = test_SNR(ta_perform, SNRrange, best_model_path1, opts, device, dataloader)
     
-    snrNeg_bleus = test_SNR(ta_perform, SNRrange, best_model_path2, opts, device, [texts, targets])
+    snrNeg_bleus = test_SNR(ta_perform, SNRrange, best_model_path2, opts, device, dataloader)
     
     # print(snr12_bleus)
     
@@ -407,7 +413,7 @@ def main_test1(test_bleu=False):
             plt.legend()
             plt.tight_layout()  # Adjust layout to fit elements properly
             
-            plt.savefig(f"bleu_{dataset_N}" + '.png') 
+            plt.savefig(f"bleu_{dataset_N}_new" + '.png') 
 
         draw_BLEU_chart(test_stats['bleu'])
         draw_threshold_bars(test_stats['bleu'], 0.9, "Distribution of BLEU score", "BLEU Score", "Count", f"bleu_count_{dataset_N}")
@@ -415,7 +421,7 @@ def main_test1(test_bleu=False):
     
         return
     
-    inputs, _ = get_test_samples(opts, batch_size=5)
+    inputs, _ = get_test_samples(opts, batch_size=30)
     
     received = text_test(ta_perform, inputs, test_snr, model, device)
     
@@ -463,7 +469,8 @@ def main_test_single():
     received = text_test_single(ta_perform, text, test_snr, model, device)
 
 if __name__ == '__main__':
-    main_test1(True)
+    main_test1()
+    # main_test1(True)
     # main_test_single()
     # main_test_textr_SNR()
     # main_test_signals()
