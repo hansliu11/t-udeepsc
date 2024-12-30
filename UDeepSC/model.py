@@ -11,7 +11,7 @@ from functools import partial
 from trans_decoder import Decoder
 from timm.models.registry import register_model
 from timm.models.layers import trunc_normal_ as __call_trunc_normal_
-from transformers import BertForSequenceClassification, BertModel
+from transformers import BertModel
 from model_util import Block, _cfg, PatchEmbed, get_sinusoid_encoding_table
 from base_args import IMGC_NUMCLASS,TEXTC_NUMCLASS,IMGR_LENGTH,TEXTR_NUMCLASS,VQA_NUMCLASS,MSA_NUMCLASS
 
@@ -211,19 +211,18 @@ class UDeepSC_M2(nn.Module):
                                 drop_path_rate=drop_path_rate,norm_layer=norm_layer, init_values=init_values,
                                 use_learnable_pos_emb=use_learnable_pos_emb)
         
-        # bert_ckpt = f"/Data1/zhangguangyi/SemanRes2/JSACCode/UDeepSC_Base/pretrained_models/bert-{mode}"
-        # self.text_encoder = BertModel.from_pretrained(bert_ckpt)
+        print(f"Load pre-train weight from bert-{mode}")
         
-        bert_ckpt = f"/prajjwal1/bert-{mode}"
-        text_encoder_pretrained = BertModel.from_pretrained(bert_ckpt)
+        bert_ckpt = f"prajjwal1/bert-{mode}"
+        self.text_encoder = BertModel.from_pretrained(bert_ckpt)
+        # text_encoder_pretrained = BertModel.from_pretrained(bert_ckpt)
 
         # Get state_dict of pretrained bert
-        pretrained_state_dict = text_encoder_pretrained.state_dict()
+        # pretrained_state_dict = text_encoder_pretrained.state_dict()
         
-        self.text_encoder = BertTextEncoder(embed_dim=text_embed_dim)
+        # self.text_encoder = BertTextEncoder(embed_dim=text_embed_dim)
         # Load pretrained state_dict
-        print(f"Load pre-train weight from bert-{mode}")
-        self.text_encoder.load_state_dict(pretrained_state_dict, strict=False)
+        # self.text_encoder.load_state_dict(pretrained_state_dict, strict=False)
         
         self.spe_encoder = SPTEncoder(in_chans=encoder_in_chans,num_classes=encoder_num_classes, embed_dim=speech_embed_dim,
                                 depth=speech_encoder_depth,num_heads=encoder_num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias,drop_rate=drop_rate, 
@@ -435,8 +434,8 @@ class UDeepSC_M2(nn.Module):
             noise_snr = test_snr
             # print(f"SNR: {noise_snr}")
         if text is not None:
-            # x_text = self.text_encoder(ta_perform, text, return_dict=False)[0]
-            x_text = self.text_encoder(text, ta_perform)[0]
+            x_text = self.text_encoder(ta_perform, text, return_dict=False)[0]
+            # x_text = self.text_encoder(text, ta_perform)[0]
             # x_text = self.LN(x_text)
             if ta_perform.startswith('textc'):
                 x_text = x_text[:,0,:].unsqueeze(1)
@@ -502,6 +501,10 @@ class UDeepSC_M2(nn.Module):
             return x
 
 class UDeepSCUplinkNOMA(nn.Module):
+    """
+        UDeepSC non-orthogonal version
+        Signals are superimposed
+    """
     def __init__(self,mode='tiny',
                  img_size=224, patch_size=16, encoder_in_chans=3, encoder_num_classes=0, 
                  img_embed_dim=384, text_embed_dim=384, speech_embed_dim=128, img_encoder_depth=4, 
@@ -512,20 +515,6 @@ class UDeepSCUplinkNOMA(nn.Module):
                  ):
 
         super().__init__()
-        self.img_encoder = ViTEncoder(img_size=img_size, patch_size=patch_size, in_chans=encoder_in_chans, 
-                                num_classes=encoder_num_classes, embed_dim=img_embed_dim,depth=img_encoder_depth,
-                                num_heads=encoder_num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias,drop_rate=drop_rate, 
-                                drop_path_rate=drop_path_rate,norm_layer=norm_layer, init_values=init_values,
-                                use_learnable_pos_emb=use_learnable_pos_emb)
-        
-        # bert_ckpt = f"/Data1/zhangguangyi/SemanRes2/JSACCode/UDeepSC_Base/pretrained_models/bert-{mode}"
-        bert_ckpt = f"/prajjwal1/bert-{mode}"
-        self.text_encoder = BertModel.from_pretrained(bert_ckpt)
-        
-        self.spe_encoder = SPTEncoder(in_chans=encoder_in_chans,num_classes=encoder_num_classes, embed_dim=speech_embed_dim,
-                                depth=speech_encoder_depth,num_heads=encoder_num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias,drop_rate=drop_rate, 
-                                drop_path_rate=drop_path_rate,norm_layer=norm_layer, init_values=init_values,
-                                use_learnable_pos_emb=use_learnable_pos_emb)
         
         if mode=='tiny':
             text_embed_dim = 128
@@ -533,6 +522,20 @@ class UDeepSCUplinkNOMA(nn.Module):
             text_embed_dim = 512
         else:
             text_embed_dim = 512
+        
+        self.img_encoder = ViTEncoder(img_size=img_size, patch_size=patch_size, in_chans=encoder_in_chans, 
+                                num_classes=encoder_num_classes, embed_dim=img_embed_dim,depth=img_encoder_depth,
+                                num_heads=encoder_num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias,drop_rate=drop_rate, 
+                                drop_path_rate=drop_path_rate,norm_layer=norm_layer, init_values=init_values,
+                                use_learnable_pos_emb=use_learnable_pos_emb)
+        
+        bert_ckpt = f"prajjwal1/bert-{mode}"
+        self.text_encoder = BertModel.from_pretrained(bert_ckpt)
+        
+        self.spe_encoder = SPTEncoder(in_chans=encoder_in_chans,num_classes=encoder_num_classes, embed_dim=speech_embed_dim,
+                                depth=speech_encoder_depth,num_heads=encoder_num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias,drop_rate=drop_rate, 
+                                drop_path_rate=drop_path_rate,norm_layer=norm_layer, init_values=init_values,
+                                use_learnable_pos_emb=use_learnable_pos_emb)
         
         self.num_symbols_imgc = 16
         self.num_symbols_imgr = 16
@@ -557,6 +560,8 @@ class UDeepSCUplinkNOMA(nn.Module):
         '''
         TODO: change tranmisson from OMA to NOMA
         '''
+        ## SIC module
+        
         self.textc_channel_to_decoder  =    nn.Linear(self.num_symbols_textc, decoder_embed_dim)
         self.imgc_channel_to_decoder  =     nn.Linear(self.num_symbols_imgc, decoder_embed_dim)
         self.textr_channel_to_decoder  =    nn.Linear(self.num_symbols_textr, decoder_embed_dim)
@@ -606,10 +611,16 @@ class UDeepSCUplinkNOMA(nn.Module):
     def get_num_layers(self):
         return len(self.blocks)
     
-    def transmit(self, input_signal, noise_std, encoder_to_channel, channel_to_decoder):
+    def transmit(self, input_signal, SNRdb, encoder_to_channel, channel_to_decoder):
         x = encoder_to_channel(input_signal)
+        x_shape = x.shape
+        
         x = power_norm_batchwise(x)
-        x = self.channel.AWGN(x, noise_std.item())
+        x = tensor_real2complex(x, 'concat')
+        x = self.channel.AWGN(x, SNRdb.item())
+        x = tensor_complex2real(x, 'concat')
+        
+        x = x.view(x_shape)
         x = channel_to_decoder(x)
         return x
 
@@ -629,16 +640,20 @@ class UDeepSCUplinkNOMA(nn.Module):
             # x_text = self.LN(x_text)
             if ta_perform.startswith('textc'):
                 x_text = x_text[:,0,:].unsqueeze(1)
-                x_text = self.transmit(x_text, noise_std, self.textc_encoder_to_channel, self.textc_channel_to_decoder)
+                # x_text = self.transmit(x_text, noise_std, self.textc_encoder_to_channel, self.textc_channel_to_decoder)
+                x_text = self.textc_encoder_to_channel(x_text)
             elif ta_perform.startswith('textr'):
                 x_text = x_text[:,1:-1,:]  
-                x_text = self.transmit(x_text, noise_std, self.textr_encoder_to_channel, self.textr_channel_to_decoder)
+                # x_text = self.transmit(x_text, noise_std, self.textr_encoder_to_channel, self.textr_channel_to_decoder)
+                x_text = self.textr_encoder_to_channel(x_text)
             elif ta_perform.startswith('vqa'):
                 x_text = x_text[:,0:2,:]
-                x_text = self.transmit(x_text, noise_std, self.vqa_text_encoder_to_channel, self.vqa_text_channel_to_decoder)
+                # x_text = self.transmit(x_text, noise_std, self.vqa_text_encoder_to_channel, self.vqa_text_channel_to_decoder)
+                x_text = self.vqa_text_encoder_to_channel(x_text)
             elif ta_perform.startswith('msa'):
                 x_text = x_text[:,-2:-1,:]
-                x_text = self.transmit(x_text, noise_std, self.msa_text_encoder_to_channel, self.msa_text_channel_to_decoder)
+                # x_text = self.transmit(x_text, noise_std, self.msa_text_encoder_to_channel, self.msa_text_channel_to_decoder)
+                x_text = self.msa_text_encoder_to_channel(x_text)
 
             
         if img is not None:
@@ -722,7 +737,7 @@ def UDeepSC_model(pretrained=False, **kwargs):
 @register_model
 def UDeepSC_new_model(pretrained=False, **kwargs):
     model = UDeepSC_M2(
-        mode='small',
+        mode='medium',
         img_size=32,
         patch_size=4,
         img_embed_dim=384,

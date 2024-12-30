@@ -1,6 +1,7 @@
 data
 output
 log
+img
 wandb
 *.tz
 *.pyc

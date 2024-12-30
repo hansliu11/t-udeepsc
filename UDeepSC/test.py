@@ -217,7 +217,7 @@ def test_SNR(ta_perform:str, SNRrange:list[int], model_path, args,device, datalo
                     preds[:,i] = outputs[:,i].max(-1)[-1] 
                 
                 preds = tokens2sentence(preds)
-                targets = tokens2sentence(targets)
+                targets = tokens2sentence(targets) 
                 
                 # bleu = computebleu(preds, targets) / batch_size
                 bleu_meter.update(computebleu(preds, targets)/batch_size, n=batch_size)
@@ -322,11 +322,11 @@ def main_test_textr_SNR():
     folder = Path('./output'+ '/' + task_fold)
     
     # test model trained on snr 12
-    best_model_path1 = get_best_checkpoint(folder, "snr12new")
+    best_model_path1 = get_best_checkpoint(folder, "snr12Md")
     print(f'{best_model_path1 = }')
     
     # test model trained on snr -2
-    best_model_path2 = get_best_checkpoint(folder, "snr-2new")
+    best_model_path2 = get_best_checkpoint(folder, "snr-2Md")
     print(f'{best_model_path2 = }')
     
     opts.model = 'UDeepSC_new_model'
@@ -382,8 +382,8 @@ def main_test1(test_bleu=False):
     test_snr = torch.FloatTensor([12])
 
     # using europarl dataset
-    # opts.textr_euro = True
-    dataset_N = "SST-2"
+    opts.textr_euro = True
+    dataset_N = "Europarl"
     
     if(test_bleu):
         testset, dataloader = get_test_dataloader(opts, batch_size=32)

@@ -319,10 +319,15 @@ def train_log(epoch, loss_all:dict):
     
 def validation_log(ta_perform, epoch, stats):
     log_data = {"epoch": epoch}
-    log_data[f'{ta_perform}/valid_loss'] = stats['loss']
-    
-    metric = list(stats.keys())[1]
-    log_data[f'{ta_perform}/{metric}'] = stats[metric]
+    if ta_perform.startswith('vqa'):
+        log_data[f'{ta_perform}/accuracy'] = stats['overall']
+        for ansType in stats['perAnswerType']:
+            log_data[f'{ta_perform}/{ansType}/accuracy'] = stats['perAnswerType'][ansType]
+    else: 
+        log_data[f'{ta_perform}/valid_loss'] = stats['loss']
+        metric = list(stats.keys())[1]
+        log_data[f'{ta_perform}/{metric}'] = stats[metric]
+        
     wandb.log(log_data)
     
 def toColor(text: str, color: str, other: str='') -> str:

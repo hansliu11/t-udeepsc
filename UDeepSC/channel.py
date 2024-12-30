@@ -205,10 +205,12 @@ def power_norm_batchwise(signal, power=1):
     batchsize , num_elements = signal.shape[0], len(signal[0].flatten())
     num_complex = num_elements//2
     signal_shape = signal.shape
+    
+    # make as complex signals (batch_size, num_complex, 2)
     signal = signal.view(batchsize, num_complex, 2)
     signal_power = torch.sum((signal[:,:,0]**2 + signal[:,:,1]**2), dim=-1)/num_complex
 
     signal = signal * math.sqrt(power) / torch.sqrt(signal_power.unsqueeze(-1).unsqueeze(-1))
     # print("Signal after power normalize: " + str_type(signal))
-    # signal = signal.view(signal_shape)
+    signal = signal.view(signal_shape)
     return signal
