@@ -17,7 +17,7 @@ from datasets import build_dataset_train, build_dataset_test, BatchSchedulerSamp
 
 ## 0 -> 2 1 -> 1 2 -> 0 3 -> 3
 # os.environ['CUDA_VISIBLE_DEVICES'] = '1'
-# os.environ['WANDB_MODE'] = 'disabled'
+os.environ['WANDB_MODE'] = 'disabled'
 
 ############################################################
 def wandbConfig_initial(args):
@@ -46,7 +46,7 @@ def main(args):
     seed_initial(seed=args.seed)
     
     ### wanb init
-    wandb.init(project="udeepsc", name="test_textr_loss_(SNR=12)")
+    wandb.init(project="udeepsc", name="Non-SignalDetection_vqa(SNR=12)")
     wandbConfig_initial(args)
     ####################################### Get the model
     model = get_model(args)
@@ -69,8 +69,12 @@ def main(args):
     '''
         ta_sel: select the task for training
     '''
-    # ta_sel = ['vqa', 'textc', 'textr']
-    ta_sel = ['imgr', 'textr']
+    # ta_sel = ['vqa', 'textc', 'imgc']
+    ta_sel = ['imgc', 'vqa']
+    n_user = 2
+    power_constraint = np.random.choice(list(range(1,10)), n_user)
+    print(f"Power Constraint: {power_constraint} for {n_user} users")
+    
     trainset_group = build_dataset_train(is_train=True, ta_sel=ta_sel, args=args)
     trainloader_group= build_dataloader(ta_sel,trainset_group, args=args)
 
@@ -119,7 +123,7 @@ def main(args):
         if args.ta_perform.startswith('img') or args.ta_perform.startswith('text'):
             test_stats = evaluate(ta_perform=args.ta_perform, 
                                 net=model, dataloader=dataloader_val, 
-                                device=device, criterion=criterion_test)
+                                device=device, criterion=criterion_test, power_constraint=power_constraint)
             if args.ta_perform.startswith('imgc') or args.ta_perform.startswith('textc'):
                 print(f"Accuracy of the network on the {len(valset)} test samples: {test_stats['acc']*100:.3f}")
             elif args.ta_perform.startswith('imgr'):
@@ -129,13 +133,13 @@ def main(args):
         elif args.ta_perform.startswith('msa'):
             test_stats = evaluate_msa(ta_perform=args.ta_perform, 
                                 net=model, dataloader=dataloader_val, 
-                                device=device, criterion=criterion_test)
+                                device=device, criterion=criterion_test, power_constraint=power_constraint)
             print(f"Accuracy of the network on the {len(valset)} test samples: {test_stats['acc']*100:.3f}")
         
         elif args.ta_perform.startswith('vqa'):
             test_stats = evaluate_vqa(ta_perform=args.ta_perform, 
                                 net=model, dataloader=dataloader_val, 
-                                device=device, criterion=criterion_test)
+                                device=device, criterion=criterion_test, power_constraint=power_constraint)
             print("Overall Accuracy is: %.02f" % (test_stats['overall']))
             print("Per Answer Type Accuracy is the following:")
             for ansType in test_stats['perAnswerType']:
@@ -155,7 +159,7 @@ def main(args):
 
         train_stats = train_epoch_uni(
                 model, criterion_train, trainloader_group, optimizer, device, epoch, loss_scaler, 
-                ta_sel, args.clip_grad,  start_steps=epoch * num_training_steps_per_epoch,
+                ta_sel, power_constraint=power_constraint, max_norm=args.clip_grad,  start_steps=epoch * num_training_steps_per_epoch,
                 lr_schedule_values=lr_schedule_values, wd_schedule_values=wd_schedule_values, 
                 update_freq=args.update_freq)
 
@@ -176,15 +180,15 @@ def main(args):
             if args.ta_perform.startswith('img') or args.ta_perform.startswith('text'):
                 test_stats = evaluate(ta_perform=args.ta_perform, 
                                     net=model, dataloader=dataloader_val, 
-                                    device=device, criterion=criterion_test)
+                                    device=device, criterion=criterion_test, power_constraint=power_constraint)
             elif args.ta_perform.startswith('vqa'):
                 test_stats = evaluate_vqa(ta_perform=args.ta_perform, 
                                     net=model, dataloader=dataloader_val, 
-                                    device=device, criterion=criterion_test)
+                                    device=device, criterion=criterion_test, power_constraint=power_constraint)
             else:
                 test_stats = evaluate_msa(ta_perform=args.ta_perform, 
                                     net=model, dataloader=dataloader_val, 
-                                    device=device, criterion=criterion_test)
+                                    device=device, criterion=criterion_test, power_constraint=power_constraint)
             validation_log(args.ta_perform, epoch ,test_stats)
             
             if args.ta_perform.startswith('imgc') or args.ta_perform.startswith('textc'):

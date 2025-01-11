@@ -201,16 +201,36 @@ def transmit(data, SNRdb, bits_per_digit):
 
 
 
-def power_norm_batchwise(signal, power=1):
-    batchsize , num_elements = signal.shape[0], len(signal[0].flatten())
-    num_complex = num_elements//2
+def power_norm_batchwise(signal: torch.Tensor, power:float=1.0):
+    """
+            For forward().
+            Args:
+                signal: real tensor of shape (batch_size, *dim, symbol_dim)
+                power_constraint: integer
+            Returns:
+                The same as signal, but power normalized.
+            
+            NOTE: 
+                MUST USE ON REAL TENSOR!!!!!! it can't handle complex tensor
+    """
     signal_shape = signal.shape
+    signal = torch.flatten(signal, start_dim=1)
+    batchsize , num_elements = signal.shape[0], signal.size()[-1]
     
-    # make as complex signals (batch_size, num_complex, 2)
-    signal = signal.view(batchsize, num_complex, 2)
-    signal_power = torch.sum((signal[:,:,0]**2 + signal[:,:,1]**2), dim=-1)/num_complex
-
-    signal = signal * math.sqrt(power) / torch.sqrt(signal_power.unsqueeze(-1).unsqueeze(-1))
-    # print("Signal after power normalize: " + str_type(signal))
-    signal = signal.view(signal_shape)
+    power_constraint = torch.full((batchsize, 1), power).to(signal.device) # (batch_size, 1)
+    K = num_elements // 2 # the number of complex symbols, not real symbols
+    
+    
+    
+    # # make as complex signals (batch_size, num_complex, 2)
+    # signal = signal.view(batchsize, K, 2)
+    # signal_power = torch.sum((signal[:,:,0]**2 + signal[:,:,1]**2), dim=-1) / K
+    
+    # signal = signal * math.sqrt(power) / torch.sqrt(signal_power.unsqueeze(-1).unsqueeze(-1))
+    # # print("Signal after power normalize: " + str_type(signal))
+    # signal = signal.view(signal_shape)
+    
+    signal = signal * torch.sqrt(K * power_constraint / torch.sum(signal ** 2, dim=1, keepdim=True))
+    signal = torch.reshape(signal, (-1, signal_shape[1], signal_shape[-1]))
+    
     return signal

@@ -2,6 +2,7 @@ data
 output
 log
 img
+vqaeval_result
 wandb
 *.tz
 *.pyc

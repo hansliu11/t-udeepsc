@@ -20,7 +20,7 @@ def get_loss_scale_for_deepspeed(model):
 
 @torch.no_grad()
 def evaluate(ta_perform: str, net: torch.nn.Module, dataloader: Iterable, 
-                  device: torch.device, criterion: torch.nn.Module, print_freq=10):
+                  device: torch.device, criterion: torch.nn.Module, power_constrain: list[float], print_freq=10):
     net.eval()
     if ta_perform.startswith('imgc'):
         acc_meter = AverageMeter()
@@ -122,7 +122,7 @@ def evaluate(ta_perform: str, net: torch.nn.Module, dataloader: Iterable,
 
 @torch.no_grad()
 def evaluate_vqa(ta_perform: str, net: torch.nn.Module, dataloader: Iterable, 
-                  device: torch.device, criterion: torch.nn.Module, print_freq=500):
+                  device: torch.device, criterion: torch.nn.Module, power_constraint: list[float], print_freq=500):
     net.eval()
     dataset = dataloader.dataset
     qid_list = [ques['question_id'] for ques in dataset.ques_list]
@@ -132,7 +132,7 @@ def evaluate_vqa(ta_perform: str, net: torch.nn.Module, dataloader: Iterable,
         imgs, texts, targets = imgs.to(device), texts.to(device), targets.to(device)
         batch_size = imgs.shape[0]
         i += batch_size
-        outputs = net(img=imgs, text=texts, ta_perform=ta_perform)
+        outputs = net(img=imgs, text=texts, ta_perform=ta_perform, power_constraint=power_constraint)
         pred_np = outputs.cpu().data.numpy()
         pred_argmax = np.argmax(pred_np, axis=1)
         if pred_argmax.shape[0] != dataset.configs.eval_batch_size:
@@ -164,7 +164,7 @@ def evaluate_vqa(ta_perform: str, net: torch.nn.Module, dataloader: Iterable,
     return vqaEval.accuracy
 
 
-def train_class_batch_uni(ta_perform, model, sel_batch, targets, criterion):
+def train_class_batch_uni(ta_perform, model, sel_batch, targets, criterion, power_constraint: list[float]):
     loss = 0
     imgs, texts, speechs = sel_batch
     """
@@ -172,27 +172,27 @@ def train_class_batch_uni(ta_perform, model, sel_batch, targets, criterion):
     If use pretrained bert on huggingface, there is no "ta_perform" parameter.
     """
     if ta_perform.startswith('imgc'):
-        outputs = model(img=imgs,ta_perform=ta_perform)
+        outputs = model(img=imgs,ta_perform=ta_perform, power_constraint=power_constraint)
         loss = criterion[ta_perform](outputs, targets) * 1  
     elif ta_perform.startswith('imgr'):
-        outputs = model(img=imgs, ta_perform=ta_perform) 
+        outputs = model(img=imgs, ta_perform=ta_perform,power_constraint=power_constraint) 
         targets = rearrange(targets, 'b c (h p1) (w p2) -> b (h w) (p1 p2 c)', p1=4, p2=4)
         loss = criterion[ta_perform](outputs, targets) * 30
     elif ta_perform.startswith('textc'):
-        outputs = model(text=texts, ta_perform=ta_perform)
+        outputs = model(text=texts, ta_perform=ta_perform,power_constraint=power_constraint)
         loss = criterion[ta_perform](outputs, targets) * 0.6
     elif ta_perform.startswith('textr'):
-        outputs = model(text=texts, ta_perform=ta_perform) * 1
+        outputs = model(text=texts, ta_perform=ta_perform,power_constraint=power_constraint) * 1
         targets = targets[:,1:]
         # print(targets.shape)
         # print(outputs.shape)
         for i in range(outputs.shape[1]):
             loss += criterion[ta_perform](outputs[:,i], targets[:,i])*5
     elif ta_perform.startswith('vqa'):
-        outputs = model(img=imgs, text=texts, ta_perform=ta_perform)
+        outputs = model(img=imgs, text=texts, ta_perform=ta_perform,power_constraint=power_constraint)
         loss = criterion[ta_perform](outputs, targets) * 3
     elif ta_perform.startswith('msa'):
-        outputs = model(img=imgs, text=texts, speech=speechs, ta_perform=ta_perform)
+        outputs = model(img=imgs, text=texts, speech=speechs, ta_perform=ta_perform,power_constraint=power_constraint)
         loss = criterion[ta_perform](outputs, targets) * 8
     return loss, outputs
 
@@ -211,7 +211,7 @@ def meter(ta_sel):
 
 def train_epoch_uni(model: torch.nn.Module, criterion: dict,
                 data_dict: dict, optimizer: torch.optim.Optimizer,
-                device: torch.device, epoch: int, loss_scaler, ta_sel, max_norm: float=0,
+                device: torch.device, epoch: int, loss_scaler, ta_sel, power_constraint:list[float], max_norm: float=0,
                 start_steps=None,lr_schedule_values=None, wd_schedule_values=None, 
                 update_freq=None, print_freq=10):
     '''
@@ -267,7 +267,7 @@ def train_epoch_uni(model: torch.nn.Module, criterion: dict,
         sel_batch = [imgs, texts, speechs]                                           
         # with torch.cuda.amp.autocast():
         loss, outputs = train_class_batch_uni(
-            ta, model, sel_batch, targets, criterion)
+            ta, model, sel_batch, targets, criterion, power_constraint)
         loss_value = loss.item()
         # print(loss)
         ######  Error                              
@@ -434,14 +434,14 @@ def train_epoch_vqa(model: torch.nn.Module, criterion: torch.nn.Module,
 
 @torch.no_grad()
 def evaluate_msa(ta_perform: str, net: torch.nn.Module, dataloader: Iterable, 
-                  device: torch.device, criterion: torch.nn.Module, print_freq=10):
+                  device: torch.device, criterion: torch.nn.Module, power_constraint:list[float], print_freq=10):
     net.eval()
     loss_meter = AverageMeter()
     y_true, y_pred = [], []
     with torch.no_grad():
         for batch_idx, (imgs,texts,speechs, targets) in enumerate(dataloader):
             imgs, texts, speechs, targets = imgs.to(device), texts.to(device), speechs.to(device), targets.to(device)
-            outputs = net(img=imgs, text=texts, speech=speechs, ta_perform=ta_perform)
+            outputs = net(img=imgs, text=texts, speech=speechs, ta_perform=ta_perform, power_constraint=power_constraint)
             loss = criterion(outputs, targets)
             y_pred.append(outputs.detach().cpu().numpy())
             y_true.append(targets.detach().cpu().numpy())
