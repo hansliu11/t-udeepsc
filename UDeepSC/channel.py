@@ -214,11 +214,12 @@ def power_norm_batchwise(signal: torch.Tensor, power:float=1.0):
                 MUST USE ON REAL TENSOR!!!!!! it can't handle complex tensor
     """
     signal_shape = signal.shape
+    dim = tuple(signal.size()[1:-1])
     signal = torch.flatten(signal, start_dim=1)
     batchsize , num_elements = signal.shape[0], signal.size()[-1]
     
     power_constraint = torch.full((batchsize, 1), power).to(signal.device) # (batch_size, 1)
-    K = num_elements // 2 # the number of complex symbols, not real symbols
+    K = num_elements // 2 # number of complex symbols
     
     
     
@@ -231,6 +232,6 @@ def power_norm_batchwise(signal: torch.Tensor, power:float=1.0):
     # signal = signal.view(signal_shape)
     
     signal = signal * torch.sqrt(K * power_constraint / torch.sum(signal ** 2, dim=1, keepdim=True))
-    signal = torch.reshape(signal, (-1, signal_shape[1], signal_shape[-1]))
+    signal = torch.reshape(signal, (-1, *dim, signal_shape[-1]))
     
     return signal

@@ -46,7 +46,7 @@ def noise_gen(is_train):
         # noise_var = 10**(-channel_snr/20)
         
         ## paper only train on 12 and -2
-        channel_snr = torch.FloatTensor([-2])
+        channel_snr = torch.FloatTensor([12])
         noise_var = torch.FloatTensor([1]) * 10**(-channel_snr/20)  
     else:
         channel_snr = torch.FloatTensor([12])
@@ -740,7 +740,7 @@ class Channels():
         noise_real = torch.randn_like(Tx_sig.real) * torch.sqrt(sigma2 / 2)
         noise_imag = torch.randn_like(Tx_sig.imag) * torch.sqrt(sigma2 / 2)
         noise = torch.complex(noise_real, noise_imag).to(device)
-        return Tx_sig + noise
+        return noise.add_(Tx_sig)
  
     def Rayleigh(self, Tx_sig, n_std):
         device = Tx_sig.device
@@ -768,3 +768,55 @@ class Channels():
         Rx_sig = torch.matmul(Rx_sig, torch.inverse(H)).view(shape)
         return Rx_sig
 
+class SIC():
+    def decode(self, signal: torch.Tensor, user_dim_index: int, power_constraint: list[float], channel_type: Literal['AWGN', 'Fading'], h=None):
+        """
+            Signal detection by successive interference cancellation
+            
+            Args
+                signal: real tensor in (batch_size, 1, *dim, symbol_dim)
+                power_constraint: the power constraint for users, length n_user (The order is [text, img, speech])
+                h: channel gain (Rayleigh or Rician)
+            Return
+                decode signal of shape (batch_size, n_user, *dim, symbol_dim)
+        """
+        device = signal.device
+        batch_size = signal.size()[0]
+        num_elements = signal.size()[-1]
+        dim = tuple(signal.size()[user_dim_index + 1:])
+
+        num_users = len(power_constraint)
+        K = num_elements // 2 # number of complex symbols
+
+        if channel_type == "AWGN":
+            # Sort users by transmit power (descending order)
+            user_indices = np.argsort(power_constraint)[::-1]
+        else: # Rayleigh or Rician
+            if h is None:
+                raise ValueError("Channel gains (h) must be provided for Rayleigh channel.")
+            # Compute effective received power |h_i|^2 * P_i
+            effective_power = torch.abs(h)**2 * power_constraint
+            user_indices = np.argsort(effective_power)[::-1]
+
+
+        decoded_signals = torch.zeros((batch_size, num_users, *dim)).to(device)
+        remaining_signal  = signal.clone().detach().to(device)
+
+        for i in user_indices:
+            # decode ith user signal
+            if channel_type == "AWGN":
+                estimated_power = torch.full((batch_size,) + (1,) * len(dim), power_constraint[i]).to(device)
+                decoded_signals[:,i,:] = remaining_signal[:, 0, :] / torch.sqrt(K * estimated_power)
+                remaining_signal -= decoded_signals[:,i:i+1,]
+            else: # Rayleigh or Rician
+                if h is None:
+                    raise ValueError("Channel gains (h) must be provided for Rayleigh channel.")
+                # Estimate the i-th user's signal based on remaining signal
+                estimated_signal = remaining_signal / h[i]  
+                current_signal = torch.abs(estimated_signal)
+                decoded_signals[:,i,:] = current_signal
+                
+                # subtract decoded signal from received signal
+                remaining_signal -= h[i] * current_signal
+
+        return decoded_signals
