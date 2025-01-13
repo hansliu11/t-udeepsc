@@ -10,9 +10,10 @@ from utils import *
 from base_args import get_args
 from timm.utils import AverageMeter
 from einops import rearrange
-from datasets import build_dataset_test
+from datasets import build_dataset_test, collate_fn
 from torch.utils.data import Subset
 import matplotlib.pyplot as plt
+from vqa_utils import VQA_Tool, VQA_Eval
 
 def get_best_checkpoint(folder: Path, label="checkpoint"):
     """
@@ -50,14 +51,14 @@ def get_test_dataloader(args, batch_size=5):
     """Return testset and test dataloader"""
     testset = build_dataset_test(is_train=False, args=args)
     if args.textr_euro:
-        indices = list(range(batch_size * 1000))
+        indices = list(range(args.batch_size * 1000))
         testset = Subset(testset, indices)
+
     sampler_test = torch.utils.data.SequentialSampler(testset)
+    Collate_fn = collate_fn if args.ta_perform.startswith('msa') else None 
     test_dataloader= torch.utils.data.DataLoader(
-        testset, sampler=sampler_test, batch_size=int(1.0 * batch_size),
-        num_workers=4, pin_memory=args.pin_mem, drop_last=False)
-    
-        
+        testset, sampler=sampler_test, batch_size=int(1.0 * args.batch_size),
+        num_workers=4, pin_memory=args.pin_mem, drop_last=False, collate_fn=Collate_fn)
     
     return testset, test_dataloader
 
@@ -155,10 +156,8 @@ def text_test_BLEU(ta_perform:str, textLoader: Iterable, snr:torch.FloatTensor, 
     return test_stat
 
 
-def test_SNR(ta_perform:str, SNRrange:list[int], model_path, args,device, dataloader:Iterable):
+def test_SNR(ta_perform:str, SNRrange:list[int], power_constraint, model_path, args,device, dataloader:Iterable):
     """
-    TODO
-    Test model on different SNR
     Inputs:
         SNRrange: Test SNR range which is a list with length 2
                     (should be [min SNR,  max SNR])
@@ -171,6 +170,7 @@ def test_SNR(ta_perform:str, SNRrange:list[int], model_path, args,device, datalo
     print(f'{args.resume = }')
     checkpoint_model = load_checkpoint(model, args)
     load_state_dict(model, checkpoint_model, prefix=args.model_prefix)
+    model.to(device)
     
     model.eval()
     if ta_perform.startswith('imgr'):    
@@ -184,7 +184,7 @@ def test_SNR(ta_perform:str, SNRrange:list[int], model_path, args,device, datalo
                 
                 snr = torch.FloatTensor([i])
                 logger.info(f"Test SNR = {snr}")
-                outputs = model(img=imgs, ta_perform=ta_perform, test_SNR=snr)
+                outputs = model(img=imgs, ta_perform=ta_perform, power_constraint=power_constraint, test_snr=snr)
                 outputs = rearrange(outputs, 'b n (p c) -> b n p c', c=3)
                 outputs = rearrange(outputs, 'b (h w) (p1 p2) c -> b c (h p1) (w p2)', p1=4, p2=4, h=8, w=8)
             
@@ -202,14 +202,14 @@ def test_SNR(ta_perform:str, SNRrange:list[int], model_path, args,device, datalo
         avg_bleu = []
         for snr in range(SNRrange[0], SNRrange[1] + 1):
             bleu_meter = AverageMeter()
+            snr = torch.FloatTensor([snr])  
+            logger.info(f"Test SNR = {snr}")
             for (texts, targets) in tqdm(dataloader):
                 batch_size = texts.size(0)
                 texts, targets = texts.to(device), targets.to(device)
                 
-                snr = torch.FloatTensor([snr])
                 
-                logger.info(f"Test SNR = {snr}")
-                outputs = model(text=texts, ta_perform=ta_perform, test_snr=snr)
+                outputs = model(text=texts, ta_perform=ta_perform, power_constraint=power_constraint, test_snr=snr)
             
                 targets = texts[:,1:]
                 preds = torch.zeros_like(targets)
@@ -226,6 +226,71 @@ def test_SNR(ta_perform:str, SNRrange:list[int], model_path, args,device, datalo
         
         return avg_bleu
     
+    elif ta_perform.startswith('vqa'):
+        dataset = dataloader.dataset
+        qid_list = [ques['question_id'] for ques in dataset.ques_list]
+        avg_acc = []
+        for snr in range(SNRrange[0], SNRrange[1] + 1):
+            ans_ix_list = []
+            i = 0
+            snr = torch.FloatTensor([snr])
+            logger.info(f"Test SNR = {snr}")
+            
+            for (imgs, texts, targets) in tqdm(dataloader):
+                imgs, texts, targets = imgs.to(device), texts.to(device), targets.to(device)
+                batch_size = imgs.shape[0]
+                i += batch_size  
+                outputs = model(img=imgs, text=texts, ta_perform=ta_perform, power_constraint=power_constraint, test_snr=snr)
+                pred_np = outputs.cpu().data.numpy()
+                pred_argmax = np.argmax(pred_np, axis=1)
+                if pred_argmax.shape[0] != dataset.configs.eval_batch_size:
+                    pred_argmax = np.pad(
+                        pred_argmax,(0, dataset.configs.eval_batch_size - pred_argmax.shape[0]),
+                        mode='constant',constant_values=-1)
+                ans_ix_list.append(pred_argmax)
+                
+            ans_ix_list = np.array(ans_ix_list).reshape(-1)
+            result = [{
+                'answer': dataset.ix_to_ans[str(ans_ix_list[qix])],  # ix_to_ans(load with json) keys are type of string
+                'question_id': int(qid_list[qix])}for qix in range(qid_list.__len__())]
+
+            result_eval_file = 'vqaeval_result/result_run_' + dataset.configs.version + '.json'
+            print('Save the result to file: {}'.format(result_eval_file))
+            json.dump(result, open(result_eval_file, 'w'))
+
+            # create vqa object and vqaRes object
+            ques_file_path = dataset.configs.question_path['val']
+            ans_file_path = dataset.configs.answer_path['val']
+            vqa = VQA_Tool(ans_file_path, ques_file_path)
+            vqaRes = vqa.loadRes(result_eval_file, ques_file_path)
+            vqaEval = VQA_Eval(vqa, vqaRes, n=2)  
+            vqaEval.evaluate()
+            states = vqaEval.accuracy
+            avg_acc.append(states['overall'])
+        
+        return avg_acc
+    
+    elif ta_perform.startswith('msa'):
+        avg_acc = []
+        for snr in range(SNRrange[0], SNRrange[1] + 1):
+            snr = torch.FloatTensor([snr])
+            logger.info(f"Test SNR = {snr}")
+            
+            y_true, y_pred = [], []
+            for (imgs, texts, speechs, targets) in tqdm(dataloader):
+                imgs, texts, speechs, targets = imgs.to(device), texts.to(device), speechs.to(device), targets.to(device)
+                outputs = model(img=imgs, text=texts, speech=speechs, ta_perform=ta_perform, power_constraint=power_constraint, test_snr=snr)
+                y_pred.append(outputs.detach().cpu().numpy())
+                y_true.append(targets.detach().cpu().numpy())
+        
+            y_true = np.concatenate(y_true, axis=0).squeeze()
+            y_pred = np.concatenate(y_pred, axis=0).squeeze()
+            acc = calc_metrics(y_true, y_pred) 
+            avg_acc.append(acc * 100)       
+        
+        return avg_acc
+        
+        
 def test_features(ta:str, test_snr: torch.FloatTensor, model_path, args,device, dataset):
     logger.info("Start test features before transmission and after")
     
@@ -302,8 +367,16 @@ def main_test_signals():
 
 def main_test_textr_SNR():
     opts = get_args()
-    ta_perform = 'textr'
-    device = 'cpu'
+    ta_perform = 'msa'
+    device = 'cuda:0'
+    device = torch.device(device)
+    power_constraint = [2, 3, 4]
+    
+    chart_args = {
+        'channel_type' : "AWGN channel",
+        'output': "acc_msa",
+        'y_axis': "Accuracy (%)"
+    }
     
     if ta_perform.startswith('imgc'):
         task_fold = 'imgc'
@@ -315,36 +388,50 @@ def main_test_textr_SNR():
         task_fold = 'ckpt_textr'
         task_fold = 'textr_smooth_01'
     elif ta_perform.startswith('vqa'):
-        task_fold = 'vqa'
+        task_fold = 'udeepsc_vqa'
+        task_fold_noSIC = 'noSIC_vqa'
+        task_fold_SIC = 'NOMA_vqa'
     elif ta_perform.startswith('msa'):
-        task_fold = 'msa'
+        task_fold = 'udeepsc_msa'
+        task_fold_noSIC = 'noSIC_msa'
+        task_fold_SIC = 'NOMA_msa'
 
     folder = Path('./output'+ '/' + task_fold)
+    folderSIC = Path('./output'+ '/' + task_fold_SIC)
+    folder_noSIC = Path('./output/' + task_fold_noSIC)
     
     # test model trained on snr 12
-    best_model_path1 = get_best_checkpoint(folder, "snr12Md")
+    best_model_path1 = get_best_checkpoint(folder, "checkpoint")
     print(f'{best_model_path1 = }')
     
     # test model trained on snr -2
-    best_model_path2 = get_best_checkpoint(folder, "snr-2Md")
+    best_model_path2 = get_best_checkpoint(folderSIC, "checkpoint")
     print(f'{best_model_path2 = }')
+    
+    best_model_path3 = get_best_checkpoint(folder_noSIC, "checkpoint")
+    print(f'{best_model_path3 = }')
     
     opts.model = 'UDeepSC_new_model'
     opts.ta_perform = ta_perform
+    opts.batch_size = 32
     
-    testset, dataloader = get_test_dataloader(opts, batch_size=32)
+    testset, dataloader = get_test_dataloader(opts)
     SNRrange = [-6, 12]
     
-    snr12_bleus = test_SNR(ta_perform, SNRrange, best_model_path1, opts, device, dataloader)
+    metric1 = test_SNR(ta_perform, SNRrange, power_constraint, best_model_path1, opts, device, dataloader)
     
-    snrNeg_bleus = test_SNR(ta_perform, SNRrange, best_model_path2, opts, device, dataloader)
+    opts.model = 'UDeepSC_NOMA_model'
+    metric2 = test_SNR(ta_perform, SNRrange, power_constraint, best_model_path2, opts, device, dataloader)
+    
+    opts.model = 'UDeepSC_NOMANoSIC_model'
+    metric3 = test_SNR(ta_perform, SNRrange, power_constraint, best_model_path3, opts, device, dataloader)
     
     # print(snr12_bleus)
     
     x = [i for i in range(SNRrange[0], SNRrange[1] + 1)]
-    models = [snr12_bleus, snrNeg_bleus]
-    labels = ["Textr-LSCE (SNR = 12)", "Textr-LSCE (SNR = -2)"]
-    draw_line_chart(x, models, labels, "AWGN","SNR/db", "Bleu score", output="bleu_SNR")
+    models = [metric1, metric2, metric3]
+    labels = ["U-DeepSC", "U-DeepSC_NOMA", "U-DeepSC_NOMA (w/o SIC)"]
+    draw_line_chart(x, models, labels, chart_args['channel_type'], "SNR/dB", chart_args['y_axis'], output=chart_args['output'])
 
 def main_test1(test_bleu=False):
     opts = get_args()
@@ -428,7 +515,7 @@ def main_test1(test_bleu=False):
 def main_test_single():
     opts = get_args()
     ta_perform = 'textr'
-    device = 'cpu'
+    device = 'cuda'
     
     if ta_perform.startswith('imgc'):
         task_fold = 'imgc'
@@ -451,6 +538,7 @@ def main_test_single():
     opts.model = 'UDeepSC_new_model'
     opts.resume = best_model_path
     opts.ta_perform = ta_perform
+    opts.device = device
     
     model = get_model(opts)
     print(f'{opts.resume = }')
@@ -469,8 +557,8 @@ def main_test_single():
     received = text_test_single(ta_perform, text, test_snr, model, device)
 
 if __name__ == '__main__':
-    main_test1()
+    # main_test1()
     # main_test1(True)
     # main_test_single()
-    # main_test_textr_SNR()
+    main_test_textr_SNR()
     # main_test_signals()
