@@ -4,6 +4,8 @@ from loguru import logger
 import re
 from transformers import BertTokenizer
 from tqdm import tqdm
+import json
+import datetime
 
 import model  
 from utils import *
@@ -14,6 +16,17 @@ from datasets import build_dataset_test, collate_fn
 from torch.utils.data import Subset
 import matplotlib.pyplot as plt
 from vqa_utils import VQA_Tool, VQA_Eval
+
+def save_result_JSON(results: list, output:str):
+    now = datetime.datetime.now(tz=datetime.timezone(datetime.timedelta(hours=8)))
+    
+    now = now.strftime('%m%d-%H%M')
+    output = output + now + ".json"
+    logger.info(f"Save result to {output}...")
+    
+    # Save the list to a JSON file
+    with open(output, "w") as file:
+        json.dump(results, file)
 
 def get_best_checkpoint(folder: Path, label="checkpoint"):
     """
@@ -370,12 +383,14 @@ def main_test_textr_SNR():
     ta_perform = 'msa'
     device = 'cuda:0'
     device = torch.device(device)
-    power_constraint = [2, 3, 4]
+    power_constraint = [2, 3, 5]
+    result_output = ta_perform + "_result"
     
     chart_args = {
         'channel_type' : "AWGN channel",
         'output': "acc_msa",
-        'y_axis': "Accuracy (%)"
+        'y_axis': "Accuracy (%)",
+        "y_lim" : [55, 80],
     }
     
     if ta_perform.startswith('imgc'):
@@ -430,8 +445,11 @@ def main_test_textr_SNR():
     
     x = [i for i in range(SNRrange[0], SNRrange[1] + 1)]
     models = [metric1, metric2, metric3]
+    
+    save_result_JSON(models, result_output)
+    
     labels = ["U-DeepSC", "U-DeepSC_NOMA", "U-DeepSC_NOMA (w/o SIC)"]
-    draw_line_chart(x, models, labels, chart_args['channel_type'], "SNR/dB", chart_args['y_axis'], output=chart_args['output'])
+    draw_line_chart(x, models, y_lim= chart_args['y_lim'], labels=labels, title=chart_args['channel_type'], xlabel="SNR/dB", ylabel=chart_args['y_axis'], output=chart_args['output'])
 
 def main_test1(test_bleu=False):
     opts = get_args()

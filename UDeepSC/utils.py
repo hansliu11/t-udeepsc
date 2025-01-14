@@ -250,13 +250,14 @@ def load_state_dict(model, state_dict, prefix='', ignore_missing="relative_posit
     if len(error_msgs) > 0:
         print('\n'.join(error_msgs))
     
-def draw_line_chart(x, y_lists, labels=None, title="Line Chart", xlabel="X-axis", ylabel="Y-axis", output="plot"):
+def draw_line_chart(x, y_lists, y_lim:list[float]=None, labels=None, title="Line Chart", xlabel="X-axis", ylabel="Y-axis", output="plot"):
     """
     Draws a line chart using two lists for x and y coordinates.
 
     Inputs:
         x (list): Values for the x-axis.
         y_lists (list of lists): A list of lists where each inner list represents y-values for one line.
+        y_lim: min and max y-axis ticks [min, max]
         labels (list): Labels for each line. Default is None, which will use a generic label.
         title (str): Title of the chart. Default is "Line Chart".
         xlabel (str): Label for the x-axis. Default is "X-axis".
@@ -281,6 +282,9 @@ def draw_line_chart(x, y_lists, labels=None, title="Line Chart", xlabel="X-axis"
     plt.ylabel(ylabel, fontsize=16)
     # Modify tick label size
     plt.tick_params(axis='both', which='major', labelsize=14)
+    
+    if(y_lim):
+        plt.gca().set_ylim(y_lim)
     
     plt.grid(True)  # Add grid lines
     
@@ -345,14 +349,6 @@ def toColor(text: str, color: str, other: str='') -> str:
             An ANSI-colored string.
     """
     return f'{getattr(colorama.Fore, color.upper())}{other}{text}{colorama.Style.RESET_ALL}'
-
-def rpad(array, n=70):
-    """Right padding."""
-    current_len = len(array)
-    if current_len > n:
-        return array[: n - 1]
-    extra = n - current_len
-    return array + ([0] * extra)
 
 class NativeScalerWithGradNormCount:
     state_dict_key = "amp_scaler"
@@ -633,7 +629,7 @@ def calc_ssim(predictions, targets):
     return metric
 
 import nltk
-from pytorch_transformers import BertTokenizer
+from transformers import BertTokenizer
 from nltk.translate.bleu_score import sentence_bleu
 from bert_score import score
 
