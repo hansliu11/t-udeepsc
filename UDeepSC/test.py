@@ -380,17 +380,17 @@ def main_test_signals():
 
 def main_test_textr_SNR():
     opts = get_args()
-    ta_perform = 'msa'
+    ta_perform = 'vqa'
     device = 'cuda:0'
     device = torch.device(device)
-    power_constraint = [2, 3, 5]
+    power_constraint = [2, 5, 10]
     result_output = ta_perform + "_result"
     
     chart_args = {
         'channel_type' : "AWGN channel",
-        'output': "acc_msa",
+        'output': "acc_" + ta_perform,
         'y_axis': "Accuracy (%)",
-        "y_lim" : [55, 80],
+        "y_lim" : [20, 61, 10],
     }
     
     if ta_perform.startswith('imgc'):
@@ -420,7 +420,7 @@ def main_test_textr_SNR():
     print(f'{best_model_path1 = }')
     
     # test model trained on snr -2
-    best_model_path2 = get_best_checkpoint(folderSIC, "checkpoint")
+    best_model_path2 = get_best_checkpoint(folderSIC, "CRSIC")
     print(f'{best_model_path2 = }')
     
     best_model_path3 = get_best_checkpoint(folder_noSIC, "checkpoint")
@@ -438,6 +438,8 @@ def main_test_textr_SNR():
     opts.model = 'UDeepSC_NOMA_model'
     metric2 = test_SNR(ta_perform, SNRrange, power_constraint, best_model_path2, opts, device, dataloader)
     
+    
+    power_constraint = [3, 3, 3]
     opts.model = 'UDeepSC_NOMANoSIC_model'
     metric3 = test_SNR(ta_perform, SNRrange, power_constraint, best_model_path3, opts, device, dataloader)
     
@@ -574,9 +576,29 @@ def main_test_single():
     
     received = text_test_single(ta_perform, text, test_snr, model, device)
 
+def main_test_draw_from_read():
+    file_name = "msa_result0116-2220.json"
+    chart_args = {
+        'channel_type' : "AWGN channel",
+        'output': "acc_msa",
+        'y_axis': "Accuracy (%)",
+        "y_lim" : [55, 81, 5],
+    }
+    
+    # Load the list back
+    with open(file_name, "r") as file:
+        models = json.load(file)
+    
+    SNRrange = [-6, 12]
+    x = [i for i in range(SNRrange[0], SNRrange[1] + 1)]
+    
+    labels = ["U-DeepSC", "U-DeepSC_NOMA", "U-DeepSC_NOMA (w/o SIC)"]
+    draw_line_chart(x, models, y_lim= chart_args['y_lim'], labels=labels, title=chart_args['channel_type'], xlabel="SNR/dB", ylabel=chart_args['y_axis'], output=chart_args['output'])
+    
 if __name__ == '__main__':
     # main_test1()
     # main_test1(True)
     # main_test_single()
     main_test_textr_SNR()
     # main_test_signals()
+    # main_test_draw_from_read()
