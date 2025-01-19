@@ -768,11 +768,27 @@ class Channels():
         Rx_sig = torch.matmul(Rx_sig, torch.inverse(H)).view(shape)
         return Rx_sig
 
-class SIC():
-    def decode(self, signal: torch.Tensor, user_dim_index: int, power_constraint: list[float], channel_type: Literal['AWGN', 'Fading'], h=None):
+class SIC(nn.Module):
+    def __init__(self, 
+                 img_embed_dim: int, 
+                 text_embed_dim: int, 
+                 speech_embed_dim: int, 
+                 num_antennas :int):
+        super(SIC, self).__init__()
         """
-            Signal detection by successive interference cancellation
-            
+            Signal detection by channel reconstruction successive interference cancellation
+            paper ref.
+                - https://ieeexplore.ieee.org/abstract/document/10233614?casa_token=qufCIaPszeYAAAAA:ujSza85Bd7w0j07U8hyQbtGNGHd0mqYw3A7-xwDGcllLhEDxdRiPnmIuwkUhVDI-7gjrkRZFqw
+        """
+        
+        self.img_channel_decoder  =  nn.Linear(num_antennas, img_embed_dim)
+        self.text_channel_decoder  = nn.Linear(num_antennas, text_embed_dim)
+        self.spe_channel_decoder  =  nn.Linear(num_antennas, speech_embed_dim)
+        
+        self.channel_decoders = nn.ModuleList([self.text_channel_decoder, self.img_channel_decoder, self.spe_channel_decoder])
+        
+    def forward(self, signal: torch.Tensor, user_dim_index: int, power_constraints: list[float], channel_encoders: list[nn.Module], channel_type: Literal['AWGN', 'Fading'], h=None):
+        """            
             Args
                 signal: real tensor in (batch_size, 1, *dim, symbol_dim)
                 power_constraint: the power constraint for users, length n_user (The order is [text, img, speech])
@@ -785,17 +801,20 @@ class SIC():
         num_elements = signal.size()[-1]
         dim = tuple(signal.size()[user_dim_index + 1:])
 
-        num_users = len(power_constraint)
+        num_users = len(power_constraints)
         K = num_elements // 2 # number of complex symbols
+        
+        if(num_users == 1):
+            return signal
 
         if channel_type == "AWGN":
             # Sort users by transmit power (descending order)
-            user_indices = np.argsort(power_constraint)[::-1]
+            user_indices = np.argsort(power_constraints)[::-1]
         else: # Rayleigh or Rician
             if h is None:
                 raise ValueError("Channel gains (h) must be provided for Rayleigh channel.")
             # Compute effective received power |h_i|^2 * P_i
-            effective_power = torch.abs(h)**2 * power_constraint
+            effective_power = torch.abs(h)**2 * power_constraints
             user_indices = np.argsort(effective_power)[::-1]
 
 
@@ -803,11 +822,31 @@ class SIC():
         remaining_signal  = signal.clone().detach().to(device)
 
         for i in user_indices:
-            # decode ith user signal
+            """
+                Decoding steps:
+                    1. Use channel decoder to decode stronger signal
+                    
+                    2. Channel encoding (same as transmitter) the signal to simulate the signal state of the transmitter
+                    
+                    3. Subtract encoded estimated signal from Y
+                    
+                    4. Repeat until all signal been detected
+            """
+            
             if channel_type == "AWGN":
-                estimated_power = torch.full((batch_size,) + (1,) * len(dim), power_constraint[i]).to(device)
-                decoded_signals[:,i,:] = remaining_signal[:, 0, :] / torch.sqrt(K * estimated_power)
-                remaining_signal -= decoded_signals[:,i:i+1,]
+                estimated = self.channel_decoders[i](remaining_signal[:, 0, :])
+                estimated = channel_encoders[i](estimated)
+                # print(estimated.shape)
+                
+                decoded_signals[:,i,:] = estimated
+                power_constr = torch.full((batch_size, 1), power_constraints[i]).to(device)
+                sig = estimated.clone().detach().to(device)
+                sig = torch.flatten(sig, start_dim=1)
+
+                estimated_pow = torch.sqrt((power_constr * K) / torch.sum(sig ** 2, dim=1, keepdim=True))
+                estimated_pow = estimated_pow.view(batch_size, *[1] * (remaining_signal.ndim - 1))
+                
+                remaining_signal = remaining_signal - (estimated_pow * decoded_signals[:,i:i+1,])
             else: # Rayleigh or Rician
                 if h is None:
                     raise ValueError("Channel gains (h) must be provided for Rayleigh channel.")
