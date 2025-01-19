@@ -12,6 +12,7 @@ from typing import Iterable, Optional
 from vqa_utils import VQA_Tool, VQA_Eval
 from timm.utils import accuracy, AverageMeter
 from nltk.translate.bleu_score import sentence_bleu
+from optim_factory import create_optimizer
 ####################################
 
 def get_loss_scale_for_deepspeed(model):
@@ -163,6 +164,47 @@ def evaluate_vqa(ta_perform: str, net: torch.nn.Module, dataloader: Iterable,
 
     return vqaEval.accuracy
 
+def get_channel_loss(criterion, outputs, targets):
+    total_loss = 0.0
+    for out, tar in zip(outputs, targets):
+        total_loss += criterion(out, tar)
+        
+    return total_loss
+        
+def train_channel_batch_uni(ta_perform, model, sel_batch, targets, criterion, power_constraint: list[float]):
+    loss = 0
+    imgs, texts, speechs = sel_batch
+    channel_criterion = criterion['channel_decoder']
+    
+    if ta_perform.startswith('imgc'):
+        targets, Tx_sigs = model.get_signals(img=imgs,ta_perform=ta_perform, power_constraint=power_constraint)
+        Rx_sigs = [model.detecter.img_channel_decoder(Tx_sigs[0])]
+        
+        loss = get_channel_loss(channel_criterion, Rx_sigs, targets)
+    elif ta_perform.startswith('textc'):
+        targets, Tx_sigs = model.get_signals(text=texts, ta_perform=ta_perform,power_constraint=power_constraint)[0]
+        Rx_sigs = [model.detecter.text_channel_decoder(Tx_sigs[0])]
+        
+        loss = get_channel_loss(channel_criterion, Rx_sigs, targets)
+    elif ta_perform.startswith('vqa'):
+        targets, Tx_sigs = model.get_signals(img=imgs, text=texts, ta_perform=ta_perform,power_constraint=power_constraint)
+        Rx_img_sig = model.detecter.img_channel_decoder(Tx_sigs[0])
+        Rx_text_sig = model.detecter.text_channel_decoder(Tx_sigs[1])
+        Rx_sigs = [Rx_img_sig, Rx_text_sig]
+        
+        loss = get_channel_loss(channel_criterion, Rx_sigs, targets)
+    elif ta_perform.startswith('msa'):
+        targets, Tx_sigs = model.get_signals(img=imgs, text=texts, speech=speechs, ta_perform=ta_perform,power_constraint=power_constraint)
+        Rx_img_sig = model.detecter.img_channel_decoder(Tx_sigs[0])
+        Rx_text_sig = model.detecter.text_channel_decoder(Tx_sigs[1])
+        Rx_spe_sig = model.detecter.spe_channel_decoder(Tx_sigs[2])
+        Rx_sigs = [Rx_img_sig, Rx_text_sig, Rx_spe_sig]
+        
+        loss = get_channel_loss(channel_criterion, Rx_sigs, targets)
+    
+    return loss
+    
+
 
 def train_class_batch_uni(ta_perform, model, sel_batch, targets, criterion, power_constraint: list[float]):
     loss = 0
@@ -207,6 +249,104 @@ def meter(ta_sel):
         loss_meter_dict[ta] = AverageMeter()
     psnr_meter = AverageMeter()
     return acc_meter_dict, loss_meter_dict, psnr_meter
+
+def train_channel_epoch_uni(model: torch.nn.Module, criterion: dict,
+                data_dict: dict, optimizer: torch.optim.Optimizer,
+                device: torch.device, epoch: int, loss_scaler, ta_sel, power_constraint:list[float], max_norm: float=0,
+                start_steps=None,lr_schedule_values=None, wd_schedule_values=None, 
+                update_freq=None, print_freq=10):
+    """
+        Training phase 1 for training channel decoder in SIC of UDeepSC_NOMA_model
+    """
+    
+    model.train(True)
+    loss_meter =  AverageMeter()                                          
+
+    if loss_scaler is None:    
+        model.zero_grad()
+        model.micro_steps = 0
+    else:
+        optimizer.zero_grad()
+
+    num_samples = 5000
+    data_iter_step = 0
+    num_tasks = len(data_dict)
+    data_tuple = [data_loader for data_loader in data_dict.values()]
+    # data_tuple[2],data_tuple[3],data_tuple[4]
+    train_stat = {}
+        
+    for data_batch in zip(*data_tuple):    
+        step = data_iter_step // update_freq
+        it = start_steps + step  
+        if lr_schedule_values is not None or wd_schedule_values is not None and data_iter_step % update_freq == 0:
+            for i, param_group in enumerate(optimizer.param_groups):
+                if lr_schedule_values is not None:
+                    lr_scale = param_group.get("lr_scale", 1.0)  # Use default value if "lr_scale" is missing
+                    param_group["lr"] = lr_schedule_values[it] * lr_scale              
+                if wd_schedule_values is not None and param_group["weight_decay"] > 0:
+                    param_group["weight_decay"] = wd_schedule_values[it]
+        imgs, texts, speechs, targets = None, None, None, None
+        ta_index = np.random.randint(num_tasks)
+        ta = ta_sel[ta_index]
+        data = data_batch[ta_index]
+        if ta.startswith('img'):
+            imgs = data[0].to(device, non_blocking=True)
+            targets = data[1].to(device, non_blocking=True)
+        elif ta.startswith('text'):
+            texts = data[0].to(device, non_blocking=True)
+            targets = data[1].to(device, non_blocking=True)
+        elif ta.startswith('vqa'):
+            imgs = data[0].to(device, non_blocking=True)
+            texts = data[1].to(device, non_blocking=True)
+            targets = data[2].to(device, non_blocking=True)
+        elif ta.startswith('msa'):
+            imgs = data[0].to(device, non_blocking=True)
+            texts = data[1].to(device, non_blocking=True)
+            speechs = data[2].to(device, non_blocking=True)
+            targets = data[3].to(device, non_blocking=True)
+        else:
+            raise NotImplementedError()
+        batch_size = targets.shape[0]
+        sel_batch = [imgs, texts, speechs]                                           
+        # with torch.cuda.amp.autocast():
+        
+        chDecoder_loss = train_channel_batch_uni(
+        ta, model, sel_batch, targets, criterion, power_constraint)
+        chDecoder_loss_val = chDecoder_loss.item()
+
+        # print(loss)
+        ######  Error                              
+        if not math.isfinite(chDecoder_loss_val):   
+                print("Channel loss is {}, stopping training".format(chDecoder_loss_val))
+                sys.exit(1)
+        ######  Update
+        
+        if loss_scaler is None:
+            chDecoder_loss /= update_freq
+            chDecoder_loss.backward()
+            model.detecter.step()
+        else:
+            is_second_order = hasattr(optimizer, 'is_second_order') and optimizer.is_second_order
+            chDecoder_loss /= update_freq
+            grad_norm = loss_scaler(chDecoder_loss, optimizer, clip_grad=max_norm,
+                                    parameters=model.detecter.parameters(), create_graph=is_second_order,
+                                    update_grad=(data_iter_step + 1) % update_freq == 0)
+            if (data_iter_step + 1) % update_freq == 0:
+                optimizer.zero_grad()
+
+        torch.cuda.synchronize()    
+        data_iter_step += 1
+        min_lr,max_lr = 10., 0.
+        for group in optimizer.param_groups:
+            min_lr,max_lr = min(min_lr, group["lr"]),max(max_lr, group["lr"])
+            
+        loss_meter.update(chDecoder_loss_val, 1)
+        if data_iter_step % print_freq == 0:
+            print('Epoch:[%d] [%s] %d/%d: [loss: %.3f][lr: %.3e]' 
+                %(epoch, "SIC", batch_size*data_iter_step, 5000,
+                    loss_meter.avg, max_lr))
+        
+    return loss_meter.avg
 
 
 def train_epoch_uni(model: torch.nn.Module, criterion: dict,

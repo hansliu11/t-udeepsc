@@ -17,7 +17,7 @@ from datasets import build_dataset_train, build_dataset_test, BatchSchedulerSamp
 
 ## 0 -> 2 1 -> 1 2 -> 0 3 -> 3
 # os.environ['CUDA_VISIBLE_DEVICES'] = '1'
-os.environ['WANDB_MODE'] = 'disabled'
+# os.environ['WANDB_MODE'] = 'disabled'
 
 ############################################################
 def wandbConfig_initial(args):
@@ -46,7 +46,7 @@ def main(args):
     seed_initial(seed=args.seed)
     
     ### wanb init
-    wandb.init(project="udeepsc", name="Non-SignalDetection_vqa(SNR=12)")
+    wandb.init(project="udeepsc", name="Non-SIC_msa_1(SNR=12)")
     wandbConfig_initial(args)
     ####################################### Get the model
     model = get_model(args)
@@ -70,9 +70,10 @@ def main(args):
         ta_sel: select the task for training
     '''
     # ta_sel = ['vqa', 'textc', 'imgc']
-    ta_sel = ['imgc', 'vqa']
-    n_user = 2
-    power_constraint = np.random.choice(list(range(1,10)), n_user)
+    ta_sel = ['msa']
+    n_user = 3
+    power_constraint = [3.0] * n_user
+    # power_constraint = [1, 5, 10]
     print(f"Power Constraint: {power_constraint} for {n_user} users")
     
     trainset_group = build_dataset_train(is_train=True, ta_sel=ta_sel, args=args)
@@ -156,8 +157,45 @@ def main(args):
         if args.distributed:
             for trainloader in trainloader_group.values():
                 trainloader.sampler.set_epoch(epoch)
+                
+        if args.model == "UDeepSC_NOMA_model":
+            """
+                Training phase 1: Train SIC module only
+                Freeze other parameters of model except SIC module
+            """
+            model.requires_grad_(False)
+            model.detecter.requires_grad_(True)
+            optimizer_SIC = create_optimizer(args, model)
+            
+            for i, param_group in enumerate(optimizer_SIC.param_groups):
+                if "lr_scale" not in param_group:
+                    print(f"Missing 'lr_scale' in param_group {i}")
+            
+            SIC_train_stats = train_channel_epoch_uni(
+                model, criterion_train, trainloader_group, optimizer_SIC, device, epoch, loss_scaler, 
+                ta_sel, power_constraint=power_constraint, max_norm=args.clip_grad,  start_steps=epoch * num_training_steps_per_epoch,
+                lr_schedule_values=lr_schedule_values, wd_schedule_values=wd_schedule_values, 
+                update_freq=args.update_freq)
+            
+            """
+                Training phase 2: Train whole model except SIC
+                Freeze SIC module only
+            """
+            
+            model.requires_grad_(True)
+            model.detecter.requires_grad_(False)
+            optimizer = create_optimizer(args, model)
+            
+            train_stats = train_epoch_uni(
+                model, criterion_train, trainloader_group, optimizer, device, epoch, loss_scaler, 
+                ta_sel, power_constraint=power_constraint, max_norm=args.clip_grad,  start_steps=epoch * num_training_steps_per_epoch,
+                lr_schedule_values=lr_schedule_values, wd_schedule_values=wd_schedule_values, 
+                update_freq=args.update_freq)
+            
+            train_stats["SIC"] = SIC_train_stats
 
-        train_stats = train_epoch_uni(
+        else:
+            train_stats = train_epoch_uni(
                 model, criterion_train, trainloader_group, optimizer, device, epoch, loss_scaler, 
                 ta_sel, power_constraint=power_constraint, max_norm=args.clip_grad,  start_steps=epoch * num_training_steps_per_epoch,
                 lr_schedule_values=lr_schedule_values, wd_schedule_values=wd_schedule_values, 

@@ -49,6 +49,8 @@ def sel_criterion_train(args, ta_sel, device):
             criterion = torch.nn.MSELoss().to(device)
             print("criterion for %s Reconstruction = %s" % (args.ta_perform,str(criterion)))
         criterion_group[ta] = criterion
+    
+    criterion_group['channel_decoder'] = torch.nn.MSELoss().to(device)
     return criterion_group
 
 
@@ -276,15 +278,16 @@ def draw_line_chart(x, y_lists, y_lim:list[float]=None, labels=None, title="Line
     # Set titles and labels
     x_tick = np.arange(x[0], x[-1] + 1, 2)
     
+    if(y_lim):
+        y_tick = np.arange(y_lim[0], y_lim[1] + 1, y_lim[2])
+        plt.yticks(y_tick, labels=y_tick)
+    
     plt.title(title, fontsize = 16)
     plt.xticks(x_tick, labels=x_tick)
     plt.xlabel(xlabel, fontsize=16)
     plt.ylabel(ylabel, fontsize=16)
     # Modify tick label size
     plt.tick_params(axis='both', which='major', labelsize=14)
-    
-    if(y_lim):
-        plt.gca().set_ylim(y_lim)
     
     plt.grid(True)  # Add grid lines
     
