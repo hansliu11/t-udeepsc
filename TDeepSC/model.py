@@ -165,7 +165,8 @@ class TDeepSC_vqa(nn.Module):
                                 drop_path_rate=drop_path_rate,norm_layer=norm_layer, init_values=init_values,
                                 use_learnable_pos_emb=use_learnable_pos_emb)
         
-        bert_ckpt = f"/Data1/zhangguangyi/SemanRes2/JSACCode/TDeepSC_Base/pretrain_models/bert-{mode}/"
+        # bert_ckpt = f"/Data1/zhangguangyi/SemanRes2/JSACCode/UDeepSC_Base/pretrained_models/bert-{mode}"
+        bert_ckpt = f"prajjwal1/bert-{mode}"
         self.text_encoder = BertModel.from_pretrained(bert_ckpt)
         if mode=='tiny':
             encoder_dim_text = 128
@@ -218,11 +219,11 @@ class TDeepSC_vqa(nn.Module):
         x_text = self.text_encoder(input_ids=text, return_dict=False)[0]
         x_img = self.img_encoder_to_channel(x_img)
         x_text = self.text_encoder_to_channel(x_text)
-        x_img = power_norm_batchwise(x_img[:,0:3])
-        x_text = power_norm_batchwise(x_text[:,0:2])
+        # x_img = power_norm_batchwise(x_img[:,0:3])
+        # x_text = power_norm_batchwise(x_text[:,0:2])
         
-        x_img = self.channel.Rayleigh(x_img, noise_std.item())
-        x_text= self.channel.Rayleigh(x_text, noise_std.item())
+        # x_img = self.channel.Rayleigh(x_img, noise_std.item())
+        # x_text= self.channel.Rayleigh(x_text, noise_std.item())
         x_img = self.img_channel_to_decoder(x_img)
         x_text = self.text_channel_to_decoder(x_text)
 
@@ -381,7 +382,8 @@ class TDeepSC_msa(nn.Module):
                                 drop_path_rate=drop_path_rate,norm_layer=norm_layer, init_values=init_values,
                                 use_learnable_pos_emb=use_learnable_pos_emb)
         
-        bert_ckpt = f"/Data1/zhangguangyi/SemanRes2/JSACCode/TDeepSC_Base/pretrain_models/bert-{mode}"
+        # bert_ckpt = f"/Data1/zhangguangyi/SemanRes2/JSACCode/TDeepSC_Base/pretrain_models/bert-{mode}"
+        bert_ckpt = f"prajjwal1/bert-{mode}"
         self.text_encoder = BertModel.from_pretrained(bert_ckpt)
         if mode=='tiny':
             encoder_dim_text = 128
@@ -449,9 +451,9 @@ class TDeepSC_msa(nn.Module):
         x_text = power_norm_batchwise(x_text[:,0].unsqueeze(1))
         x_spe = power_norm_batchwise(x_spe[:,0].unsqueeze(1))
 
-        x_img = self.channel.Rayleigh(x_img, noise_std.item())
-        x_text = self.channel.Rayleigh(x_text, noise_std.item())
-        x_spe = self.channel.Rayleigh(x_spe, noise_std.item())
+        # x_img = self.channel.Rayleigh(x_img, noise_std.item())
+        # x_text = self.channel.Rayleigh(x_text, noise_std.item())
+        # x_spe = self.channel.Rayleigh(x_spe, noise_std.item())
 
         x_img = self.img_channel_to_decoder(x_img)
         x_text = self.text_channel_to_decoder(x_text)

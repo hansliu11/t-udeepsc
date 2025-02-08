@@ -5,6 +5,7 @@ import torch
 import utils
 import model   
 import torch.backends.cudnn as cudnn
+import wandb
 
 from engine import *
 from pathlib import Path
@@ -14,7 +15,18 @@ from utils import get_model, sel_criterion, load_checkpoint
 from utils import NativeScalerWithGradNormCount as NativeScaler
 from datasets import build_dataset, BatchSchedulerSampler, collate_fn
 
+# os.environ['WANDB_MODE'] = 'disabled'
+
 ############################################################
+def wandbConfig_initial(args):
+    config = wandb.config
+    config.batch_size = args.batch_size  
+    config.epochs = args.epochs  
+    config.lr = args.lr  
+    config.use_cuda = (True if (torch.cuda.is_available() and args.device == 'cuda') else False)  
+    config.seed = args.seed  
+    config.log_interval = args.log_interval  
+
 def seed_initial(seed=0):
     seed += utils.get_rank()
     np.random.seed(seed)
@@ -29,6 +41,10 @@ def main(args):
     utils.init_distributed_mode(args)
     device = torch.device(args.device)
     seed_initial(seed=args.seed)
+
+    ### wanb init
+    wandb.init(project="tdeepsc", name="vqa_test")
+    wandbConfig_initial(args)
     ####################################### Get the model
     model = get_model(args)
     if args.resume:
@@ -137,6 +153,7 @@ def main(args):
     #                 args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
     #                 loss_scaler=loss_scaler, epoch=10, model_ema=None)
     ################################## Start Training the T-DeepSC
+    wandb.watch(model, criterion=criterion, log_freq=args.log_interval)
     print(f"Start training for {args.epochs} epochs")
     max_accuracy = 0.0
     start_time = time.time()
@@ -163,6 +180,9 @@ def main(args):
                     lr_schedule_values=lr_schedule_values, wd_schedule_values=wd_schedule_values, 
                     update_freq=args.update_freq)
       
+        ## logging training using wandb
+        train_log(epoch, train_stats)
+        
         if args.output_dir and args.save_ckpt:
             if (epoch + 1) % args.save_freq == 0 or epoch + 1 == args.epochs:
                 utils.save_model(
@@ -182,6 +202,8 @@ def main(args):
                 test_stats = evaluate_msa(ta_perform=args.ta_perform, 
                                     net=model, dataloader=dataloader_val, 
                                     device=device, criterion=criterion)
+            validation_log(args.ta_perform, epoch ,test_stats)
+            
             if args.ta_perform.startswith('imgc') or args.ta_perform.startswith('textc'):
                 print(f"Accuracy of the network on the {len(valset)} test images: {test_stats['acc']*100:.3f}")
             elif args.ta_perform.startswith('imgr'):

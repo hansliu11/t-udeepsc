@@ -416,7 +416,7 @@ def train_epoch_msa(model: torch.nn.Module, criterion: torch.nn.Module,
         targets = targets.to(device, non_blocking=True)
         batch_size = imgs.size(0)        
                            
-        with torch.cuda.amp.autocast():
+        with torch.amp.autocast('cuda'):
             loss, outputs = train_class_batch_msa(
                 ta_perform, model, imgs, texts, speechs, targets, criterion)
         loss_value = loss.item()

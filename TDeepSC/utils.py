@@ -4,14 +4,16 @@ import csv
 import math
 import time
 import json
+from typing import Iterable
 import thop
 import torch
 import datetime
 import numpy as np
 import torch.distributed as dist
+import wandb
 
 from pathlib import Path
-from torch._six import inf
+from torch import inf
 import torch.nn.functional as F
 from timm.utils import get_state_dict
 from timm.models import create_model
@@ -239,11 +241,34 @@ def load_state_dict(model, state_dict, prefix='', ignore_missing="relative_posit
     if len(error_msgs) > 0:
         print('\n'.join(error_msgs))
 
+def train_log(epoch, states:dict):
+    log_data = {"epoch": epoch}
+    for metric, val in states.items():
+        if metric == "loss":
+            log_data["training_loss"] = val
+        else:
+            log_data[f"{metric}"] = val
+
+    wandb.log(log_data)
+    
+def validation_log(ta_perform, epoch, stats):
+    log_data = {"epoch": epoch}
+    if ta_perform.startswith('vqa'):
+        log_data[f'{ta_perform}/accuracy'] = stats['overall']
+        for ansType in stats['perAnswerType']:
+            log_data[f'{ta_perform}/{ansType}/accuracy'] = stats['perAnswerType'][ansType]
+    else: 
+        log_data[f'{ta_perform}/valid_loss'] = stats['loss']
+        metric = list(stats.keys())[1]
+        log_data[f'{ta_perform}/{metric}'] = stats[metric]
+        
+    wandb.log(log_data)
+
 class NativeScalerWithGradNormCount:
     state_dict_key = "amp_scaler"
 
     def __init__(self):
-        self._scaler = torch.cuda.amp.GradScaler()
+        self._scaler = torch.amp.GradScaler('cuda')
 
     def __call__(self, loss, optimizer, clip_grad=None, parameters=None, create_graph=False, update_grad=True):
         self._scaler.scale(loss).backward(create_graph=create_graph)

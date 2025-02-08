@@ -1,12 +1,12 @@
-CUDA_VISIBLE_DEVICES=2 python3  tdeepsc_main.py \
+CUDA_VISIBLE_DEVICES=0 python3  tdeepsc_main.py \
     --model  TDeepSC_vqa_model  \
-    --output_dir ckpt_record  \
-    --batch_size 30 \
-    --input_size 224 \
-    --lr  1e-4 \
+    --output_dir output  \
+    --batch_size 50 \
+    --input_size 32 \
+    --lr  3e-5 \
     --epochs 200  \
     --opt_betas 0.95 0.99  \
-    --save_freq 2   \
-    --ta_perform vqa  
+    --save_freq 50   \
+    --ta_perform vqa \
   
    
