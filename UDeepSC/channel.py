@@ -231,7 +231,8 @@ def power_norm_batchwise(signal: torch.Tensor, power:float=1.0):
     # # print("Signal after power normalize: " + str_type(signal))
     # signal = signal.view(signal_shape)
     
-    signal = signal * torch.sqrt(K * power_constraint / torch.sum(signal ** 2, dim=1, keepdim=True))
+    power = torch.sqrt(K * power_constraint / torch.sum(signal ** 2, dim=1, keepdim=True))
+    signal = signal * power
     signal = torch.reshape(signal, (-1, *dim, signal_shape[-1]))
     
-    return signal
+    return signal, power

@@ -177,24 +177,24 @@ def train_channel_batch_uni(ta_perform, model, sel_batch, targets, criterion, po
     channel_criterion = criterion['channel_decoder']
     
     if ta_perform.startswith('imgc'):
-        targets, Tx_sigs = model.get_signals(img=imgs,ta_perform=ta_perform, power_constraint=power_constraint)
+        targets, Tx_sigs = model.get_semantic_signals(img=imgs,ta_perform=ta_perform, power_constraint=power_constraint)
         Rx_sigs = [model.detecter.img_channel_decoder(Tx_sigs[0])]
         
         loss = get_channel_loss(channel_criterion, Rx_sigs, targets)
     elif ta_perform.startswith('textc'):
-        targets, Tx_sigs = model.get_signals(text=texts, ta_perform=ta_perform,power_constraint=power_constraint)[0]
+        targets, Tx_sigs = model.get_semantic_signals(text=texts, ta_perform=ta_perform,power_constraint=power_constraint)[0]
         Rx_sigs = [model.detecter.text_channel_decoder(Tx_sigs[0])]
         
         loss = get_channel_loss(channel_criterion, Rx_sigs, targets)
     elif ta_perform.startswith('vqa'):
-        targets, Tx_sigs = model.get_signals(img=imgs, text=texts, ta_perform=ta_perform,power_constraint=power_constraint)
+        targets, Tx_sigs = model.get_semantic_signals(img=imgs, text=texts, ta_perform=ta_perform,power_constraint=power_constraint)
         Rx_img_sig = model.detecter.img_channel_decoder(Tx_sigs[0])
         Rx_text_sig = model.detecter.text_channel_decoder(Tx_sigs[1])
         Rx_sigs = [Rx_img_sig, Rx_text_sig]
         
         loss = get_channel_loss(channel_criterion, Rx_sigs, targets)
     elif ta_perform.startswith('msa'):
-        targets, Tx_sigs = model.get_signals(img=imgs, text=texts, speech=speechs, ta_perform=ta_perform,power_constraint=power_constraint)
+        targets, Tx_sigs = model.get_semantic_signals(img=imgs, text=texts, speech=speechs, ta_perform=ta_perform,power_constraint=power_constraint)
         Rx_img_sig = model.detecter.img_channel_decoder(Tx_sigs[0])
         Rx_text_sig = model.detecter.text_channel_decoder(Tx_sigs[1])
         Rx_spe_sig = model.detecter.spe_channel_decoder(Tx_sigs[2])

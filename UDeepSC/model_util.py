@@ -370,6 +370,35 @@ class Decoder(nn.Module):
         return x
 
 
+class ChannelDecoder(nn.Module):
+    def __init__(self, 
+                 num_symbols: int,
+                 output_dim: int, 
+                 ):
+        super(ChannelDecoder, self).__init__()
+        
+        self.num_symbols = num_symbols
+        self.output_dim = output_dim
+
+        self.linear1 = nn.Linear(num_symbols, output_dim)
+        self.linear2 = nn.Linear(output_dim, 256)
+        self.linear3 = nn.Linear(256, output_dim)
+        # self.linear4 = nn.Linear(size1, d_model)
+        
+        self.LN = nn.LayerNorm(output_dim, eps=1e-6)
+        
+    def forward(self, x):
+        x1 = self.linear1(x)
+        x2 = F.relu(x1)
+        x3 = self.linear2(x2)
+        x4 = F.relu(x3)
+        x5 = self.linear3(x4)
+        
+        # output = self.layernorm(x1 + x5)
+        output = self.LN(x5)
+
+        return output
+
 
 class ViTEncoder(nn.Module):
     """ Vision Transformer with support for patch or hybrid CNN input stage
@@ -743,6 +772,7 @@ class Channels():
         return noise.add_(Tx_sig)
  
     def Rayleigh(self, Tx_sig, n_std):
+        # slow fading -> all symbol use same channel gain
         device = Tx_sig.device
         shape = Tx_sig.shape
         H_real = torch.normal(0, math.sqrt(1/2), size=[1]).to(device)
@@ -787,7 +817,7 @@ class SIC(nn.Module):
         
         self.channel_decoders = nn.ModuleList([self.text_channel_decoder, self.img_channel_decoder, self.spe_channel_decoder])
         
-    def forward(self, signal: torch.Tensor, user_dim_index: int, power_constraints: list[float], channel_encoders: list[nn.Module], channel_type: Literal['AWGN', 'Fading'], h=None):
+    def forward(self, signal: torch.Tensor, user_dim_index: int, power_constraints: list[float], channel_encoders: list[nn.Module], sig_power:list, channel_type: Literal['AWGN', 'Fading'], h=None):
         """            
             Args
                 signal: real tensor in (batch_size, 1, *dim, symbol_dim)
@@ -834,7 +864,8 @@ class SIC(nn.Module):
             """
             
             if channel_type == "AWGN":
-                estimated = self.channel_decoders[i](remaining_signal[:, 0, :])
+                estimated = remaining_signal[:, 0, :]
+                estimated = self.channel_decoders[i](estimated)
                 estimated = channel_encoders[i](estimated)
                 # print(estimated.shape)
                 
@@ -846,12 +877,12 @@ class SIC(nn.Module):
                 estimated_pow = torch.sqrt((power_constr * K) / torch.sum(sig ** 2, dim=1, keepdim=True))
                 estimated_pow = estimated_pow.view(batch_size, *[1] * (remaining_signal.ndim - 1))
                 
-                remaining_signal = remaining_signal - (estimated_pow * decoded_signals[:,i:i+1,])
+                remaining_signal = remaining_signal - (estimated_pow * estimated)
             else: # Rayleigh or Rician
                 if h is None:
                     raise ValueError("Channel gains (h) must be provided for Rayleigh channel.")
                 # Estimate the i-th user's signal based on remaining signal
-                estimated_signal = remaining_signal / h[i]  
+                estimated_signal = remaining_signal / (h[i] * sig_power[i])  
                 current_signal = torch.abs(estimated_signal)
                 decoded_signals[:,i,:] = current_signal
                 

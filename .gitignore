@@ -2,6 +2,7 @@ data
 output
 log
 img
+result
 vqaeval_result
 wandb
 *.tz
