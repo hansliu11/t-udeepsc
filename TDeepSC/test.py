@@ -92,13 +92,12 @@ def test_SNR(ta_perform:str, SNRrange:list[int], model_path, args,device, datalo
         
         ans_ix_list = []
         i = 0
-        snr = torch.FloatTensor([snr])
         
         for (imgs, texts, targets) in tqdm(dataloader):
             imgs, texts, targets = imgs.to(device), texts.to(device), targets.to(device)
             batch_size = imgs.shape[0]
             i += batch_size  
-            outputs = model(img=imgs, text=texts, ta_perform=ta_perform, test_snr=snr)
+            outputs = model(img=imgs, text=texts, ta_perform=ta_perform)
             pred_np = outputs.cpu().data.numpy()
             pred_argmax = np.argmax(pred_np, axis=1)
             if pred_argmax.shape[0] != dataset.configs.eval_batch_size:
@@ -128,13 +127,10 @@ def test_SNR(ta_perform:str, SNRrange:list[int], model_path, args,device, datalo
         return states['overall']
     
     elif ta_perform.startswith('msa'):
-        snr = torch.FloatTensor([snr])
-        logger.info(f"Test SNR = {snr}")
-        
         y_true, y_pred = [], []
         for (imgs, texts, speechs, targets) in tqdm(dataloader):
             imgs, texts, speechs, targets = imgs.to(device), texts.to(device), speechs.to(device), targets.to(device)
-            outputs = model(img=imgs, text=texts, speech=speechs, ta_perform=ta_perform, test_snr=snr)
+            outputs = model(img=imgs, text=texts, speech=speechs, ta_perform=ta_perform)
             y_pred.append(outputs.detach().cpu().numpy())
             y_true.append(targets.detach().cpu().numpy())
     
@@ -146,12 +142,12 @@ def test_SNR(ta_perform:str, SNRrange:list[int], model_path, args,device, datalo
     
 def main_test_SNR_single():
     opts = get_args()
-    ta_perform = 'vqa'
-    device = 'cuda:1'
+    ta_perform = 'msa'
+    device = 'cuda:0'
     device = torch.device(device)
     power_constraint_static = [1.0, 1.0, 1.0]
-    # power_constraint = [0.5, 1, 1.5]
-    power_constraint = [0.5, 1.5]
+    power_constraint = [0.5, 1, 1.5]
+    # power_constraint = [0.5, 1.5]
     result_output = ta_perform + "_result"
     
     chart_args = {

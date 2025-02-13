@@ -447,9 +447,9 @@ class TDeepSC_msa(nn.Module):
         x_text = self.text_encoder_to_channel(x_text)
         x_spe = self.spe_encoder_to_channel(x_spe)
 
-        x_img = power_norm_batchwise(x_img[:,0].unsqueeze(1))
-        x_text = power_norm_batchwise(x_text[:,0].unsqueeze(1))
-        x_spe = power_norm_batchwise(x_spe[:,0].unsqueeze(1))
+        # x_img = power_norm_batchwise(x_img[:,0].unsqueeze(1))
+        # x_text = power_norm_batchwise(x_text[:,0].unsqueeze(1))
+        # x_spe = power_norm_batchwise(x_spe[:,0].unsqueeze(1))
 
         # x_img = self.channel.Rayleigh(x_img, noise_std.item())
         # x_text = self.channel.Rayleigh(x_text, noise_std.item())
