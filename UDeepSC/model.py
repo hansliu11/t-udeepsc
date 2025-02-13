@@ -672,7 +672,6 @@ class UDeepSC_M3(nn.Module):
                 Ex:
                     Textr: (batch_size, seq length, vocab size) for vacab size = 34000
         """
-        
         if self.training:
             noise_snr, noise_std = noise_gen(self.training)
             noise_std = noise_std.cuda()
@@ -725,15 +724,17 @@ class UDeepSC_M3(nn.Module):
             x_spe = x_spe[:,0,:].unsqueeze(1)
             x_spe = self.msa_spe_encoder_to_channel(x_spe)
             x_spe, _ = power_norm_batchwise(x_spe, power)
-            x_spe = self.transmit(x_spe, noise_snr)
+            # x_spe = self.transmit(x_spe, noise_snr)
 
         
         if ta_perform.startswith('img'):
             x_img = self.imgc_channel_decoder(x_img)
             x_img = self.imgc_channel_to_decoder(x_img)
+            x = x_img
         elif ta_perform.startswith('text'):
             x_text = self.textc_channel_decoder(x_text)
             x_text = self.textc_channel_to_decoder(x_text)
+            x = x_text
         elif ta_perform.startswith('vqa'):
             x_text = self.vqa_text_channel_decoder(x_text)
             x_text = self.vqa_text_channel_to_decoder(x_text)
@@ -788,8 +789,8 @@ class UDeepSC_M3_withSIC(UDeepSC_M3):
         dim = tuple(signal.size()[user_dim_index + 1:])
 
         num_users = len(power_constraints)
-        if(num_users == 1):
-            return signal
+        # if(num_users == 1):
+        #     return signal
         
         if channel_type == "AWGN":
             # Sort users by transmit power (descending order)
@@ -804,7 +805,7 @@ class UDeepSC_M3_withSIC(UDeepSC_M3):
 
         # decoded_signals = torch.zeros((batch_size, num_users, *dim)).to(device)
         decoded_signals = [None] * num_users
-        remaining_signal  = signal.clone().detach().to(device)
+        # remaining_signal  = signal.clone().detach().to(device)
 
         for i in user_indices:
             """
@@ -817,18 +818,20 @@ class UDeepSC_M3_withSIC(UDeepSC_M3):
                     
                     4. Repeat until all signal been detected
             """
-            estimated = remaining_signal[:, 0, :]
+            estimated = signal[:, 0, :]
             estimated = channel_decoders[i](estimated)
             # print(estimated.shape)
             decoded_signals[i] = estimated
-            estimated = channel_encoders[i](estimated)
+            
+            with torch.no_grad():
+                estimated = channel_encoders[i](estimated)
 
             estimated_norm, _ = power_norm_batchwise(estimated)
 
             if channel_type == "AWGN":
-                remaining_signal = remaining_signal - estimated_norm
+                signal = signal - estimated_norm
             else: # Fading channel (Rayleigh or Rician)
-                remaining_signal = remaining_signal - h[i] * estimated_norm
+                signal = signal - h[i] * estimated_norm
 
         return decoded_signals
         
@@ -842,8 +845,7 @@ class UDeepSC_M3_withSIC(UDeepSC_M3):
                         - user_dim: for users, indexed by user_dim_index
                         - symbol_dim: for signal symbols
             Return:
-                signal of shape (batch_size, n_user, *dim, symbol_dim) 
-                after being seperated by SIC
+                a list of decode signals in order (text, img, (speech))
         """
         # print(f"Transmid Signal Dim = {signal.shape}")
         signal = tensor_real2complex(signal, 'concat')
@@ -939,7 +941,7 @@ class UDeepSC_M3_withSIC(UDeepSC_M3):
         elif ta_perform.startswith('text'):
             power_constraint = [1]
             x = x_text.unsqueeze(1)
-            channel_encoders = [self.imgc_encoder_to_channel]
+            channel_encoders = [self.textc_encoder_to_channel]
             channel_decoders = [self.textc_channel_decoder]
             Rx_sigs = self.transmit(x, 1, noise_snr, power_constraint, channel_encoders, channel_decoders)
         elif ta_perform.startswith('vqa'):
@@ -1579,7 +1581,7 @@ class UDeepSCUplinkNOMA(nn.Module):
     def get_num_layers(self):
         return len(self.blocks)
     
-    def transmit(self, signal: torch.Tensor, user_dim_index: int, SNRdb: torch.FloatTensor):
+    def transmit(self, signal: torch.Tensor, user_dim_index: int, SNRdb: torch.FloatTensor, power_constraint: float):
         """
             Args:
                 signal: a complex tensor representing the signals from multiple transmitter (user).
@@ -1600,6 +1602,7 @@ class UDeepSCUplinkNOMA(nn.Module):
         # make superimposed signal
         signal = torch.sum(signal, dim=user_dim_index) 
         signal = signal.view(batch_size, *dim, symbol_dim)
+        signal, _ = power_norm_batchwise(signal, power_constraint)
         
         # add noise
         signal = self.channel.AWGN(signal, SNRdb.item())
@@ -1682,23 +1685,21 @@ class UDeepSCUplinkNOMA(nn.Module):
             x_text = self.transmit(x_text, 1, noise_snr)
         elif ta_perform.startswith('vqa'):
             x = torch.stack((x_img, x_text), dim=1)
-            x, _ = power_norm_batchwise(x, 2)
-            x = self.transmit(x, 1, noise_snr)
+            x = self.transmit(x, 1, noise_snr, 2)
         elif ta_perform.startswith('msa'):
+            power = 3
             x = torch.stack((x_img, x_text, x_spe), dim=1)
-            x, _ = power_norm_batchwise(x, 3)
-            x = self.transmit(x, 1, noise_snr)
+            # x = torch.stack((x_text, x_spe), dim=1)
+            x = self.transmit(x, 1, noise_snr, power)
         
         if ta_perform.startswith('img'):
             x = x_img
         elif ta_perform.startswith('text'):
             x = x_text
         elif ta_perform.startswith('vqa'):
-            # x = torch.cat([x_img,x_text], dim=1)
             x = self.vqa_channel_to_decoder(x)
                   
         elif ta_perform.startswith('msa'):
-            # x = torch.cat([x_img,x_text,x_spe], dim=1)
             x = self.msa_channel_to_decoder(x)
 
         batch_size = x.shape[0]

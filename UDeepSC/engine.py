@@ -21,7 +21,7 @@ def get_loss_scale_for_deepspeed(model):
 
 @torch.no_grad()
 def evaluate(ta_perform: str, net: torch.nn.Module, dataloader: Iterable, 
-                  device: torch.device, criterion: torch.nn.Module, power_constrain: list[float], print_freq=10):
+                  device: torch.device, criterion: torch.nn.Module, power_constraint: list[float], print_freq=10):
     net.eval()
     if ta_perform.startswith('imgc'):
         acc_meter = AverageMeter()
@@ -29,7 +29,7 @@ def evaluate(ta_perform: str, net: torch.nn.Module, dataloader: Iterable,
         with torch.no_grad():
             for batch_idx, (imgs, targets) in enumerate(dataloader):
                 imgs, targets = imgs.to(device), targets.to(device)
-                outputs = net(img=imgs, ta_perform=ta_perform)
+                outputs = net(img=imgs, ta_perform=ta_perform, power_constraint=power_constraint)
                 loss = criterion(outputs, targets)
                 batch_size = targets.size(0)
                 idx, predicted = outputs.max(1)
