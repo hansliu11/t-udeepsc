@@ -658,6 +658,84 @@ class UDeepSC_M3(nn.Module):
         
         return x
 
+    def get_signals(self, text=None, img=None, speech=None, ta_perform=None, power_constraint:list[float]=[1, 1, 1], test_snr:torch.FloatTensor=torch.FloatTensor([12])):
+        """
+            Args:
+                same as forward
+            Output:
+                Superimposed signals after channel in dimension (batch_size, user_dim, *dim, symbol_dim)
+        """
+        if self.training:
+            noise_snr, noise_std = noise_gen(self.training)
+            noise_std = noise_std.cuda()
+        else:
+            noise_std = torch.FloatTensor([1]) * 10**(-test_snr/20) 
+            noise_snr = test_snr
+            
+        if text is not None:
+            ## ##
+            x_text = self.text_encoder(ta_perform, text, return_dict=False)[0]
+            power = power_constraint[0]
+            # x_text = self.LN(x_text)
+            if ta_perform.startswith('textc'):
+                x_text = x_text[:,0,:].unsqueeze(1)
+                x_text = self.textc_encoder_to_channel(x_text)
+            elif ta_perform.startswith('vqa'):
+                x_text = x_text[:,0:3,:]
+                x_text = self.vqa_text_encoder_to_channel(x_text)
+            elif ta_perform.startswith('msa'):
+                x_text = x_text[:,-2:-1,:]
+                x_text = self.msa_text_encoder_to_channel(x_text)
+            
+            x_text_sig, _ = power_norm_batchwise(x_text, power)
+            x_text_sig = self.transmit(x_text_sig, noise_snr)
+           
+        if img is not None:
+            x_img = self.img_encoder(img, ta_perform)
+            if ta_perform.startswith('imgc'):
+                power = power_constraint[0]
+                x_img = x_img[:,0,:].unsqueeze(1)
+                x_img = self.imgc_encoder_to_channel(x_img)
+                
+            elif ta_perform.startswith('vqa'):
+                power = power_constraint[1]
+                x_img = x_img[:,0:3,:]
+                x_img = self.vqa_img_encoder_to_channel(x_img)
+                
+            elif ta_perform.startswith('msa'):
+                power = power_constraint[1]
+                x_img = x_img[:,0,:].unsqueeze(1)
+                x_img = self.msa_img_encoder_to_channel(x_img)
+    
+            x_img_sig, _ = power_norm_batchwise(x_img, power)
+            x_img_sig = self.transmit(x_img_sig, noise_snr)
+        
+        if speech is not None:
+            power = power_constraint[2]
+            x_spe = self.spe_encoder(speech, ta_perform)
+            x_spe = x_spe[:,0,:].unsqueeze(1)
+            x_spe = self.msa_spe_encoder_to_channel(x_spe)
+            x_spe_sig, _ = power_norm_batchwise(x_spe, power)
+            x_spe_sig = self.transmit(x_spe_sig, noise_snr)
+        
+        transmitted = []
+        received = []
+        if ta_perform.startswith('img'):
+            transmitted = [x_img]
+            received = [x_img_sig]
+        elif ta_perform.startswith('text'):
+            transmitted = [x_text]
+            received = [x_text_sig]
+        elif ta_perform.startswith('vqa'):
+            transmitted = [x_img, x_text]
+            received = [x_img_sig, x_text_sig]
+        elif ta_perform.startswith('msa'):
+            # print(x_img.shape, x_text.shape, x_spe.shape) # (batch_size, 1, 128)
+            transmitted = [x_img, x_text, x_spe]
+            received = [x_img_sig, x_text_sig, x_spe_sig]
+        
+        return transmitted, received
+    
     def forward(self, text=None, img=None, speech=None, ta_perform=None, power_constraint:list[float]=[1, 1, 1], test_snr:torch.FloatTensor=torch.FloatTensor([12])):
         """
             Input:
@@ -867,6 +945,119 @@ class UDeepSC_M3_withSIC(UDeepSC_M3):
 
         return outputs
     
+    def get_signals(self, text=None, img=None, speech=None, ta_perform=None, power_constraint:list[float]=[1, 1, 1], test_snr:torch.FloatTensor=torch.FloatTensor([12])):
+        """
+            Args:
+                same as forward
+            Output:
+                Superimposed signals after channel in dimension (batch_size, user_dim, *dim, symbol_dim)
+        """
+        if self.training:
+            noise_snr, noise_std = noise_gen(self.training)
+            noise_std = noise_std.cuda()
+        else:
+            noise_std = torch.FloatTensor([1]) * 10**(-test_snr/20) 
+            noise_snr = test_snr
+            
+        if text is not None:
+            ## ##
+            x_text = self.text_encoder(ta_perform, text, return_dict=False)[0]
+            power = power_constraint[0]
+            # x_text = self.LN(x_text)
+            if ta_perform.startswith('textc'):
+                x_text = x_text[:,0,:].unsqueeze(1)
+                x_text_sig = self.textc_encoder_to_channel(x_text)
+            elif ta_perform.startswith('vqa'):
+                x_text = x_text[:,0:3,:]
+                x_text_sig = self.vqa_text_encoder_to_channel(x_text)
+            elif ta_perform.startswith('msa'):
+                x_text = x_text[:,-2:-1,:]
+                x_text_sig = self.msa_text_encoder_to_channel(x_text)
+            
+            x_text_sig, _ = power_norm_batchwise(x_text_sig, power)
+            
+           
+        if img is not None:
+            x_img = self.img_encoder(img, ta_perform)
+            if ta_perform.startswith('imgc'):
+                power = power_constraint[0]
+                x_img = x_img[:,0,:].unsqueeze(1)
+                x_img_sig = self.imgc_encoder_to_channel(x_img)
+                
+            elif ta_perform.startswith('vqa'):
+                power = power_constraint[1]
+                x_img = x_img[:,0:3,:]
+                x_img_sig = self.vqa_img_encoder_to_channel(x_img)
+                
+            elif ta_perform.startswith('msa'):
+                power = power_constraint[1]
+                x_img = x_img[:,0,:].unsqueeze(1)
+                x_img_sig = self.msa_img_encoder_to_channel(x_img)
+    
+            x_img_sig, _ = power_norm_batchwise(x_img_sig, power)
+            
+        
+        if speech is not None:
+            power = power_constraint[2]
+            x_spe = self.spe_encoder(speech, ta_perform)
+            x_spe = x_spe[:,0,:].unsqueeze(1)
+            x_spe_sig = self.msa_spe_encoder_to_channel(x_spe)
+            x_spe_sig, _ = power_norm_batchwise(x_spe_sig, power)
+            
+        if ta_perform.startswith('img'):
+            power_constraint = [1]
+            x = x_img_sig.unsqueeze(1)
+            channel_encoders = [self.imgc_encoder_to_channel]
+            channel_decoders = [self.imgc_channel_decoder]
+            Rx_sigs = self.transmit(x, 1, noise_snr, power_constraint, channel_encoders, channel_decoders)
+        elif ta_perform.startswith('text'):
+            power_constraint = [1]
+            x = x_text_sig.unsqueeze(1)
+            channel_encoders = [self.textc_encoder_to_channel]
+            channel_decoders = [self.textc_channel_decoder]
+            Rx_sigs = self.transmit(x, 1, noise_snr, power_constraint, channel_encoders, channel_decoders)
+        elif ta_perform.startswith('vqa'):
+            x = torch.stack((x_img_sig, x_text_sig), dim=1)
+            channel_encoders = [self.vqa_text_encoder_to_channel, self.vqa_img_encoder_to_channel]
+            channel_decoders = [self.vqa_text_channel_decoder, self.vqa_img_channel_decoder]
+            Rx_sigs = self.transmit(x, 1, noise_snr, power_constraint, channel_encoders, channel_decoders)
+        elif ta_perform.startswith('msa'):
+            x = torch.stack((x_img_sig, x_text_sig, x_spe_sig), dim=1)
+            channel_encoders = [self.msa_text_encoder_to_channel, self.msa_img_encoder_to_channel, self.msa_spe_encoder_to_channel]
+            channel_decoders = [self.msa_text_channel_decoder, self.msa_img_channel_decoder, self.msa_spe_channel_decoder]
+            Rx_sigs = self.transmit(x, 1, noise_snr, power_constraint, channel_encoders, channel_decoders)
+        
+        if ta_perform.startswith('img'):
+            x_img_sig = Rx_sigs[0]
+        elif ta_perform.startswith('text'):
+            x_text_sig = Rx_sigs[0]
+        elif ta_perform.startswith('vqa'):
+            x_text_sig = Rx_sigs[0]
+            x_img_sig = Rx_sigs[1]
+        elif ta_perform.startswith('msa'):
+            x_text_sig = Rx_sigs[0]
+            x_img_sig = Rx_sigs[1]
+            x_spe_sig = Rx_sigs[2]
+            # print(x.shape) # (batch_size, 3, 128)
+
+        transmitted = []
+        received = []
+        if ta_perform.startswith('img'):
+            transmitted = [x_img]
+            received = [x_img_sig]
+        elif ta_perform.startswith('text'):
+            transmitted = [x_text]
+            received = [x_text_sig]
+        elif ta_perform.startswith('vqa'):
+            transmitted = [x_img, x_text]
+            received = [x_img_sig, x_text_sig]
+        elif ta_perform.startswith('msa'):
+            # print(x_img.shape, x_text.shape, x_spe.shape) # (batch_size, 1, 128)
+            transmitted = [x_img, x_text, x_spe]
+            received = [x_img_sig, x_text_sig, x_spe_sig]
+        
+        return transmitted, received
+
     def forward(self, text=None, img=None, speech=None, ta_perform=None, power_constraint:list[float]=[1, 1, 1], test_snr:torch.FloatTensor=torch.FloatTensor([12])):
         """
             Input:

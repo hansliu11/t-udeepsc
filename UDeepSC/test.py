@@ -21,7 +21,7 @@ def save_result_JSON(results: list, output:str):
     now = datetime.datetime.now(tz=datetime.timezone(datetime.timedelta(hours=8)))
     
     now = now.strftime('%m%d-%H%M')
-    output = output + now + ".json"
+    output = "result/" + output + now + ".json"
     logger.info(f"Save result to {output}...")
     
     # Save the list to a JSON file
@@ -52,13 +52,27 @@ def get_test_samples(args, batch_size=5):
     """Get first "batch size" of test sample data in dataloader"""
     testset = build_dataset_test(is_train=False, args=args)
     sampler_test = torch.utils.data.SequentialSampler(testset)
+    Collate_fn = collate_fn if args.ta_perform.startswith('msa') else None 
     test_dataloader= torch.utils.data.DataLoader(
         testset, sampler=sampler_test, batch_size=int(1.0 * batch_size),
-        num_workers=4, pin_memory=args.pin_mem, drop_last=False)
+        num_workers=4, pin_memory=args.pin_mem, drop_last=False, collate_fn=Collate_fn)
     
-    inputs, targets = next(iter(test_dataloader))
-    print(str_type(inputs))
-    return inputs, targets
+    imgs, texts, speechs, targets = None, None, None, None
+    if args.ta_perform.startswith('img'):
+        imgs, targets = next(iter(test_dataloader))
+    elif args.ta_perform.startswith('text'):
+        texts, targets = next(iter(test_dataloader))
+    elif args.ta_perform.startswith('vqa'):
+        imgs, texts, targets = next(iter(test_dataloader))
+    elif args.ta_perform.startswith('msa'):
+        imgs, texts, speechs, targets = next(iter(test_dataloader))
+        
+    else:
+        raise NotImplementedError()
+
+    sel_batch = [imgs, texts, speechs] 
+    print(str_type(sel_batch))
+    return sel_batch, targets
 
 def get_test_dataloader(args, batch_size=5):
     """Return testset and test dataloader"""
@@ -186,30 +200,22 @@ def test_SNR(ta_perform:str, SNRrange:list[int], power_constraint, model_path, a
     model.to(device)
     
     model.eval()
-    if ta_perform.startswith('imgr'):    
-        psnr_list = []
-        for i in range(SNRrange[0], SNRrange[1] + 1):
-            psnr_meter = AverageMeter()
+    if ta_perform.startswith('imgc'):    
+        avg_acc = []
+        for snr in range(SNRrange[0], SNRrange[1] + 1):
+            acc_meter = AverageMeter()
+            snr = torch.FloatTensor([snr])  
+            logger.info(f"Test SNR = {snr}")
             for (imgs, targets) in tqdm(dataloader):
                 imgs, targets = imgs.to(device), targets.to(device)
-                batch_size = imgs.size(0)
-                
-                
-                snr = torch.FloatTensor([i])
-                logger.info(f"Test SNR = {snr}")
                 outputs = model(img=imgs, ta_perform=ta_perform, power_constraint=power_constraint, test_snr=snr)
-                outputs = rearrange(outputs, 'b n (p c) -> b n p c', c=3)
-                outputs = rearrange(outputs, 'b (h w) (p1 p2) c -> b c (h p1) (w p2)', p1=4, p2=4, h=8, w=8)
-            
-                predictions = torch.chunk(outputs, chunks=outputs.size(0), dim=0)
-                targets = torch.chunk(imgs, chunks=imgs.size(0), dim=0)
-                psnr_vals = calc_psnr(predictions, targets)
-                psnr_list.extend(psnr_vals)
-                psnr_meter.update(torch.mean(torch.tensor(psnr_vals)).item(), n=batch_size)
+                batch_size = targets.size(0)
+                idx, predicted = outputs.max(1)
+                acc_meter.update(predicted.eq(targets).float().mean().item(), n=batch_size)
                 
-            psnr_list.append(psnr_meter.avg)
+            avg_acc.append(acc_meter.avg)
         
-        return psnr_list
+        return avg_acc
     
     elif ta_perform.startswith('textr'):   
         avg_bleu = []
@@ -304,9 +310,11 @@ def test_SNR(ta_perform:str, SNRrange:list[int], power_constraint, model_path, a
         return avg_acc
         
         
-def test_features(ta:str, test_snr: torch.FloatTensor, model_path, args,device, dataset):
+def test_features(ta:str, test_snr: torch.FloatTensor, power_constraint, model_path, args, device, sel_batch):
     logger.info("Start test features before transmission and after")
     
+    imgs, texts, speechs = sel_batch
+
     args.resume = model_path
     
     model = get_model(args)
@@ -315,43 +323,44 @@ def test_features(ta:str, test_snr: torch.FloatTensor, model_path, args,device, 
     load_state_dict(model, checkpoint_model, prefix=args.model_prefix)
     
     # TODO Need modify
+    model.eval()
+    
     if ta.startswith('img'):
-        imgs = dataset[0].to(device, non_blocking=True)
-        targets = dataset[1].to(device, non_blocking=True)
+        Tx_sigs, Rx_sigs = model.get_signals(img=imgs, ta_perform=ta, test_snr=test_snr)
     elif ta.startswith('text'):
-        texts = dataset[0].to(device, non_blocking=True)
-        targets = dataset[1].to(device, non_blocking=True)
+        Tx_sigs, Rx_sigs = model.get_signals(text=texts, ta_perform=ta, test_snr=test_snr)
     elif ta.startswith('vqa'):
-        imgs = dataset[0].to(device, non_blocking=True)
-        texts = dataset[1].to(device, non_blocking=True)
-        targets = dataset[2].to(device, non_blocking=True)
+        Tx_sigs, Rx_sigs = model.get_signals(img=imgs, text=texts, ta_perform=ta, power_constraint=power_constraint, test_snr=test_snr)
     elif ta.startswith('msa'):
-        imgs = dataset[0].to(device, non_blocking=True)
-        texts = dataset[1].to(device, non_blocking=True) 
-        speechs = dataset[2].to(device, non_blocking=True)
-        targets = dataset[3].to(device, non_blocking=True)
+        Tx_sigs, Rx_sigs = model.get_signals(img=imgs, text=texts, speech=speechs, ta_perform=ta, power_constraint=power_constraint, test_snr=test_snr)
     else:
         raise NotImplementedError()
     
-    model.eval()
-    signals = model.get_signals(text=texts, ta_perform=ta, SNRdb=test_snr)
-    text_signals_before, text_signals_after = signals['text']
-    batch_size = text_signals_before.shape[0]
+    batch_size = Tx_sigs[0].shape[0]
+
     for i in range(batch_size):
-        print("Before transmitting: ")
-        print(str_type(text_signals_before[i]))
-        print(text_signals_before[i])
+        for tx, rx in zip(Tx_sigs, Rx_sigs):
+            print(f"Before transmitting {i}: ")
+            print(str_type(tx[i]))
+            print(tx[i])
+            
+            print(f"After transmitting {i}: ")
+            print(str_type(rx[i]))
+            print(rx[i])
+
+            ## pause
+            input("press any key..")
         
-        print("After transmitting: ")
-        print(str_type(text_signals_after[i]))
-        print(text_signals_after[i])
-        
-    return text_signals_before, text_signals_after
+    return Tx_sigs, Rx_sigs
 
 def main_test_signals():
     opts = get_args()
-    ta_perform = 'textr'
-    device = 'cpu'
+    ta_perform = 'vqa'
+    device = 'cuda:0'
+    device = torch.device(device)
+    power_constraint_static = [1.0, 1.0, 1.0]
+    # power_constraint = [0.5, 1, 1.5]
+    power_constraint = [0.5, 1.5]
     
     if ta_perform.startswith('imgc'):
         task_fold = 'imgc'
@@ -363,34 +372,49 @@ def main_test_signals():
         task_fold = 'ckpt_textr'
         task_fold = 'textr_smooth_005'
     elif ta_perform.startswith('vqa'):
-        task_fold = 'vqa'
+        task_fold = 'udeepsc_vqa'
+        task_fold_SIC = 'NOMA_vqa'
     elif ta_perform.startswith('msa'):
-        task_fold = 'msa'
+        task_fold = 'udeepsc_msa'
+        task_fold_SIC = 'NOMA_msa'
 
-    folder = Path('./output'+ '/' + task_fold)
+    folder = Path('./output/' + task_fold)
+    folderSIC = Path('./output/' + task_fold_SIC)
     
-    best_model_path1 = get_best_checkpoint(folder, "snr12")
-    opts.model = 'UDeepSC_new_model'
+    # udeepsc
+    # best_model_path1 = get_best_checkpoint(folder, "checkpoint")
+    # print(f'{best_model_path1 = }')
+    
+    # udeepsc Noma
+    best_model_path2 = get_best_checkpoint(folderSIC, "CRSIC")
+    print(f'{best_model_path2 = }')
+
+    opts.model = 'UDeepSC_NOMA_new_model'
     opts.ta_perform = ta_perform
     
-    texts, targets = get_test_samples(opts)
+    sel_batch, targets = get_test_samples(opts)
     test_snr = torch.FloatTensor([12])
     
-    signals = test_features(ta_perform, test_snr, best_model_path1, opts, device, [texts, targets])
+    Tx_signals, Rx_signals = test_features(ta_perform, test_snr, power_constraint,best_model_path2, opts, device, sel_batch)
 
-def main_test_textr_SNR():
+def main_test_SNR():
     opts = get_args()
-    ta_perform = 'vqa'
+    ta_perform = 'msa'
     device = 'cuda:0'
     device = torch.device(device)
-    power_constraint = [2, 5, 10]
+    power_constraint_static = [1.0, 1.0, 1.0]
+    power_constraint = [0.5, 1, 1.5]
+    # power_constraint = [0.5, 1.5]
     result_output = ta_perform + "_result"
     
     chart_args = {
         'channel_type' : "AWGN channel",
         'output': "acc_" + ta_perform,
         'y_axis': "Accuracy (%)",
-        "y_lim" : [20, 61, 10],
+        "y_lim" : [55, 82, 5],
+        # "y_lim" : [20, 62, 10],
+        "vqa_upper": 55.8,
+        "msa_upper": 83
     }
     
     if ta_perform.startswith('imgc'):
@@ -406,52 +430,238 @@ def main_test_textr_SNR():
         task_fold = 'udeepsc_vqa'
         task_fold_noSIC = 'noSIC_vqa'
         task_fold_SIC = 'NOMA_vqa'
+        task_fold_pfSIC = 'perfectSIC_vqa'
     elif ta_perform.startswith('msa'):
         task_fold = 'udeepsc_msa'
         task_fold_noSIC = 'noSIC_msa'
         task_fold_SIC = 'NOMA_msa'
+        task_fold_pfSIC = 'perfectSIC_msa'
 
     folder = Path('./output'+ '/' + task_fold)
     folderSIC = Path('./output'+ '/' + task_fold_SIC)
     folder_noSIC = Path('./output/' + task_fold_noSIC)
+    folder_pfSIC = Path('./output/' + task_fold_pfSIC)
     
-    # test model trained on snr 12
-    best_model_path1 = get_best_checkpoint(folder, "checkpoint")
+    # udeepsc
+    best_model_path1 = get_best_checkpoint(folder, "udeepscM3")
     print(f'{best_model_path1 = }')
     
-    # test model trained on snr -2
+    # udeepsc Noma
     best_model_path2 = get_best_checkpoint(folderSIC, "CRSIC")
     print(f'{best_model_path2 = }')
     
-    best_model_path3 = get_best_checkpoint(folder_noSIC, "checkpoint")
+    # udeepsc Noma no SIC
+    best_model_path3 = get_best_checkpoint(folder_noSIC, "powerSum")
     print(f'{best_model_path3 = }')
+
+    # udeepsc Noma perfect SIC
+    best_model_path4 = get_best_checkpoint(folder_pfSIC, "udeepscM3")
+    print(f'{best_model_path4 = }')
     
-    opts.model = 'UDeepSC_new_model'
+    opts.model = 'UDeepSC_SepCD_model'
     opts.ta_perform = ta_perform
     opts.batch_size = 32
     
     testset, dataloader = get_test_dataloader(opts)
     SNRrange = [-6, 12]
     
-    metric1 = test_SNR(ta_perform, SNRrange, power_constraint, best_model_path1, opts, device, dataloader)
-    
-    opts.model = 'UDeepSC_NOMA_model'
+    metric1 = test_SNR(ta_perform, SNRrange, power_constraint_static, best_model_path1, opts, device, dataloader)
+    metric4 = test_SNR(ta_perform, SNRrange, power_constraint, best_model_path4, opts, device, dataloader)
+
+
+    opts.model = 'UDeepSC_NOMA_new_model'
     metric2 = test_SNR(ta_perform, SNRrange, power_constraint, best_model_path2, opts, device, dataloader)
     
     
-    power_constraint = [3, 3, 3]
+    power_constraint = [2, 2, 2]
     opts.model = 'UDeepSC_NOMANoSIC_model'
     metric3 = test_SNR(ta_perform, SNRrange, power_constraint, best_model_path3, opts, device, dataloader)
     
     # print(snr12_bleus)
     
     x = [i for i in range(SNRrange[0], SNRrange[1] + 1)]
-    models = [metric1, metric2, metric3]
+    upper_bound = [chart_args[f'{ta_perform}_upper']] * len(x)
+    models = [metric1, metric4, metric2, metric3]
     
-    save_result_JSON(models, result_output)
+    test_set = {
+        'udeepsc': str(best_model_path1),
+        'perfect SIC': str(best_model_path4),
+        'udeepsc NOMA': str(best_model_path2),
+        'no SIC': str(best_model_path3),
+        'result': models
+    }
+    save_result_JSON(test_set, result_output)
     
-    labels = ["U-DeepSC", "U-DeepSC_NOMA", "U-DeepSC_NOMA (w/o SIC)"]
+    labels = ["U-DeepSC", "U-DeepSC with perfect SIC", "U-DeepSC NOMA (with SIC)", "U-DeepSC NOMA (w/o SIC)"]
     draw_line_chart(x, models, y_lim= chart_args['y_lim'], labels=labels, title=chart_args['channel_type'], xlabel="SNR/dB", ylabel=chart_args['y_axis'], output=chart_args['output'])
+
+def main_test_SNR_single():
+    opts = get_args()
+    ta_perform = 'msa'
+    device = 'cuda:0'
+    device = torch.device(device)
+    power_constraint_static = [1.0, 1.0, 1.0]
+    power_constraint = [0.5, 1, 1.5]
+    # power_constraint = [0.5, 1.5]
+    result_output = ta_perform + "_result"
+    
+    chart_args = {
+        'channel_type' : "AWGN channel",
+        'output': "acc_" + ta_perform,
+        'y_axis': "Accuracy (%)",
+        "y_lim" : [55, 81, 5],
+        # "y_lim" : [20, 62, 10],
+    }
+    
+    if ta_perform.startswith('imgc'):
+        task_fold = 'imgc'
+    elif ta_perform.startswith('imgr'):
+        task_fold = 'imgr'
+    elif ta_perform.startswith('textc'):
+        task_fold = 'textc'
+    elif ta_perform.startswith('textr'):
+        task_fold = 'ckpt_textr'
+        task_fold = 'textr_smooth_01'
+    elif ta_perform.startswith('vqa'):
+        task_fold = 'udeepsc_vqa'
+        task_fold_noSIC = 'noSIC_vqa'
+        task_fold_SIC = 'NOMA_vqa'
+        task_fold_pfSIC = 'perfectSIC_vqa'
+    elif ta_perform.startswith('msa'):
+        task_fold = 'udeepsc_msa'
+        task_fold_noSIC = 'noSIC_msa'
+        task_fold_SIC = 'NOMA_msa'
+        # task_fold_SIC = 'ckpt_msa'
+        task_fold_pfSIC = 'perfectSIC_msa'
+
+    folder = Path('./output'+ '/' + task_fold)
+    folderSIC = Path('./output'+ '/' + task_fold_SIC)
+    folder_noSIC = Path('./output/' + task_fold_noSIC)
+    folder_pfSIC = Path('./output/' + task_fold_pfSIC)
+    
+    # udeepsc
+    best_model_path = get_best_checkpoint(folder, "udeepscM3")
+    print(f'{best_model_path = }')
+    
+    
+    opts.model = 'UDeepSC_SepCD_model'
+    opts.ta_perform = ta_perform
+    opts.batch_size = 32
+    
+    testset, dataloader = get_test_dataloader(opts)
+    SNRrange = [-6, 12]
+    
+    metric1 = test_SNR(ta_perform, SNRrange, power_constraint, best_model_path, opts, device, dataloader)
+    
+    # print(snr12_bleus)
+    
+    x = [i for i in range(SNRrange[0], SNRrange[1] + 1)]
+    models = [metric1]
+    test_setting = {
+        "Model": str(best_model_path),
+        "Result": models
+    }
+    
+    save_result_JSON(test_setting, result_output)
+    
+def main_test_Modal_SNR():
+    opts = get_args()
+    ta_perform = 'imgc'
+    device = 'cuda:0'
+    device = torch.device(device)
+    power_constraint_static = [1.0, 1.0, 1.0]
+    power_constraint = [0.5, 1, 1.5]
+    # power_constraint = [0.5, 1.5]
+    result_output = ta_perform + "_result"
+    
+    chart_args = {
+        'channel_type' : "AWGN channel",
+        'output': "acc_" + ta_perform,
+        'y_axis': "Accuracy (%)",
+        "y_lim" : [55, 82, 5],
+        # "y_lim" : [20, 62, 10],
+        "vqa_upper": 55.8,
+        "msa_upper": 83
+    }
+    
+    if ta_perform.startswith('imgc'):
+        task_fold = 'ckpt_imgc'
+    elif ta_perform.startswith('imgr'):
+        task_fold = 'imgr'
+    elif ta_perform.startswith('textc'):
+        task_fold = 'textc'
+    elif ta_perform.startswith('textr'):
+        task_fold = 'ckpt_textr'
+        task_fold = 'textr_smooth_01'
+    elif ta_perform.startswith('vqa'):
+        task_fold = 'udeepsc_vqa'
+        task_fold_noSIC = 'noSIC_vqa'
+        task_fold_SIC = 'NOMA_vqa'
+        task_fold_pfSIC = 'perfectSIC_vqa'
+    elif ta_perform.startswith('msa'):
+        task_fold = 'udeepsc_msa'
+        task_fold_noSIC = 'noSIC_msa'
+        task_fold_SIC = 'NOMA_msa'
+        task_fold_pfSIC = 'perfectSIC_msa'
+
+    folder = Path('./output'+ '/' + task_fold)
+    # folderSIC = Path('./output'+ '/' + task_fold_SIC)
+    # folder_noSIC = Path('./output/' + task_fold_noSIC)
+    # folder_pfSIC = Path('./output/' + task_fold_pfSIC)
+    
+    # udeepsc
+    best_model_path1 = get_best_checkpoint(folder, "udeepscM3")
+    print(f'{best_model_path1 = }')
+    
+    # udeepsc Noma
+    best_model_path2 = get_best_checkpoint(folder, "checkpoint")
+    print(f'{best_model_path2 = }')
+    
+    # udeepsc Noma no SIC
+    # best_model_path3 = get_best_checkpoint(folder_pfSIC, "powerSum")
+    # print(f'{best_model_path3 = }')
+
+    # udeepsc Noma perfect SIC
+    # best_model_path4 = get_best_checkpoint(folder_pfSIC, "udeepscM3")
+    # print(f'{best_model_path4 = }')
+    
+    opts.model = 'UDeepSC_SepCD_model'
+    opts.ta_perform = ta_perform
+    opts.batch_size = 32
+    
+    testset, dataloader = get_test_dataloader(opts)
+    SNRrange = [-6, 12]
+    
+    metric1 = test_SNR(ta_perform, SNRrange, power_constraint_static, best_model_path1, opts, device, dataloader)
+    # metric2 = test_SNR(ta_perform, SNRrange, power_constraint, best_model_path4, opts, device, dataloader)
+
+    opts.model = 'UDeepSC_NOMA_new_model'
+    metric2 = test_SNR(ta_perform, SNRrange, power_constraint, best_model_path2, opts, device, dataloader)
+
+    opts.model = 'UDeepSC_NOMANoSIC_model'
+    # metric3 = test_SNR(ta_perform, SNRrange, power_constraint, best_model_path3, opts, device, dataloader)
+    
+    # print(snr12_bleus)
+    
+    x = [i for i in range(SNRrange[0], SNRrange[1] + 1)]
+
+    models = [metric1, metric2]
+    
+    test_set = {
+        'udeepsc': str(best_model_path1),
+        'udeepsc NOMA': str(best_model_path2),
+        'result': models
+    }
+    save_result_JSON(test_set, result_output)
+    
+    labels = ["U-DeepSC",  "U-DeepSC NOMA (with SIC)"]
+    draw_line_chart(x, models, 
+                    # y_lim= chart_args['y_lim'], 
+                    labels=labels, 
+                    title=chart_args['channel_type'], 
+                    xlabel="SNR/dB", 
+                    ylabel=chart_args['y_axis'], 
+                    output=chart_args['output'])
 
 def main_test1(test_bleu=False):
     opts = get_args()
@@ -577,12 +787,16 @@ def main_test_single():
     received = text_test_single(ta_perform, text, test_snr, model, device)
 
 def main_test_draw_from_read():
-    file_name = "msa_result0116-2220.json"
+    ta = 'vqa'
+    file_name = "result/" + "vqa_result0205-1806.json"
     chart_args = {
         'channel_type' : "AWGN channel",
-        'output': "acc_msa",
+        'output': "acc_" + ta,
         'y_axis': "Accuracy (%)",
-        "y_lim" : [55, 81, 5],
+        # "y_lim" : [55, 82, 5],
+        "y_lim" : [20, 62, 10],
+        "vqa_upper": 55.8,
+        "msa_upper": 81
     }
     
     # Load the list back
@@ -591,14 +805,18 @@ def main_test_draw_from_read():
     
     SNRrange = [-6, 12]
     x = [i for i in range(SNRrange[0], SNRrange[1] + 1)]
+    upper_bound = [chart_args[f'{ta}_upper']] * len(x)
+    models = [upper_bound] + models
     
-    labels = ["U-DeepSC", "U-DeepSC_NOMA", "U-DeepSC_NOMA (w/o SIC)"]
+    labels = ["Upper bound", "U-DeepSC", "U-DeepSC with perfect SIC", "U-DeepSC NOMA (with SIC)", "U-DeepSC NOMA (w/o SIC)"]
     draw_line_chart(x, models, y_lim= chart_args['y_lim'], labels=labels, title=chart_args['channel_type'], xlabel="SNR/dB", ylabel=chart_args['y_axis'], output=chart_args['output'])
     
 if __name__ == '__main__':
     # main_test1()
     # main_test1(True)
     # main_test_single()
-    main_test_textr_SNR()
+    # main_test_SNR()
+    main_test_SNR_single()
+    # main_test_Modal_SNR()
     # main_test_signals()
     # main_test_draw_from_read()
