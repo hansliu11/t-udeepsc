@@ -492,6 +492,7 @@ def main_test_SNR():
     }
     save_result_JSON(test_set, result_output)
     
+    # labels = ["U-DeepSC", "with perfect SIC (img, speech)", "without SIC (img, speech)"]
     labels = ["U-DeepSC", "U-DeepSC with perfect SIC", "U-DeepSC NOMA (with SIC)", "U-DeepSC NOMA (w/o SIC)"]
     draw_line_chart(x, models, y_lim= chart_args['y_lim'], labels=labels, title=chart_args['channel_type'], xlabel="SNR/dB", ylabel=chart_args['y_axis'], output=chart_args['output'])
 
@@ -566,7 +567,7 @@ def main_test_SNR_single():
     
 def main_test_Modal_SNR():
     opts = get_args()
-    ta_perform = 'imgc'
+    ta_perform = 'msa'
     device = 'cuda:0'
     device = torch.device(device)
     power_constraint_static = [1.0, 1.0, 1.0]
@@ -606,24 +607,24 @@ def main_test_Modal_SNR():
 
     folder = Path('./output'+ '/' + task_fold)
     # folderSIC = Path('./output'+ '/' + task_fold_SIC)
-    # folder_noSIC = Path('./output/' + task_fold_noSIC)
-    # folder_pfSIC = Path('./output/' + task_fold_pfSIC)
+    folder_noSIC = Path('./output/' + task_fold_noSIC)
+    folder_pfSIC = Path('./output/' + task_fold_pfSIC)
     
     # udeepsc
     best_model_path1 = get_best_checkpoint(folder, "udeepscM3")
     print(f'{best_model_path1 = }')
     
     # udeepsc Noma
-    best_model_path2 = get_best_checkpoint(folder, "checkpoint")
-    print(f'{best_model_path2 = }')
+    # best_model_path2 = get_best_checkpoint(folder, "checkpoint")
+    # print(f'{best_model_path2 = }')
     
     # udeepsc Noma no SIC
-    # best_model_path3 = get_best_checkpoint(folder_pfSIC, "powerSum")
-    # print(f'{best_model_path3 = }')
+    best_model_path3 = get_best_checkpoint(folder_noSIC, "text_speech")
+    print(f'{best_model_path3 = }')
 
     # udeepsc Noma perfect SIC
-    # best_model_path4 = get_best_checkpoint(folder_pfSIC, "udeepscM3")
-    # print(f'{best_model_path4 = }')
+    best_model_path4 = get_best_checkpoint(folder_pfSIC, "text_speech")
+    print(f'{best_model_path4 = }')
     
     opts.model = 'UDeepSC_SepCD_model'
     opts.ta_perform = ta_perform
@@ -633,30 +634,31 @@ def main_test_Modal_SNR():
     SNRrange = [-6, 12]
     
     metric1 = test_SNR(ta_perform, SNRrange, power_constraint_static, best_model_path1, opts, device, dataloader)
-    # metric2 = test_SNR(ta_perform, SNRrange, power_constraint, best_model_path4, opts, device, dataloader)
+    metric4 = test_SNR(ta_perform, SNRrange, power_constraint, best_model_path4, opts, device, dataloader)
 
-    opts.model = 'UDeepSC_NOMA_new_model'
-    metric2 = test_SNR(ta_perform, SNRrange, power_constraint, best_model_path2, opts, device, dataloader)
+    # opts.model = 'UDeepSC_NOMA_new_model'
+    # metric2 = test_SNR(ta_perform, SNRrange, power_constraint, best_model_path2, opts, device, dataloader)
 
     opts.model = 'UDeepSC_NOMANoSIC_model'
-    # metric3 = test_SNR(ta_perform, SNRrange, power_constraint, best_model_path3, opts, device, dataloader)
+    metric3 = test_SNR(ta_perform, SNRrange, power_constraint, best_model_path3, opts, device, dataloader)
     
     # print(snr12_bleus)
     
     x = [i for i in range(SNRrange[0], SNRrange[1] + 1)]
 
-    models = [metric1, metric2]
+    models = [metric1, metric4, metric3]
     
     test_set = {
         'udeepsc': str(best_model_path1),
-        'udeepsc NOMA': str(best_model_path2),
+        'perfect SIC': str(best_model_path4),
+        'no SIC': str(best_model_path3),
         'result': models
     }
     save_result_JSON(test_set, result_output)
     
-    labels = ["U-DeepSC",  "U-DeepSC NOMA (with SIC)"]
+    labels = ["U-DeepSC", "with perfect SIC (text, speech)", "without SIC (text, speech)"]
     draw_line_chart(x, models, 
-                    # y_lim= chart_args['y_lim'], 
+                    y_lim= chart_args['y_lim'], 
                     labels=labels, 
                     title=chart_args['channel_type'], 
                     xlabel="SNR/dB", 
@@ -816,7 +818,7 @@ if __name__ == '__main__':
     # main_test1(True)
     # main_test_single()
     # main_test_SNR()
-    main_test_SNR_single()
-    # main_test_Modal_SNR()
+    # main_test_SNR_single()
+    main_test_Modal_SNR()
     # main_test_signals()
     # main_test_draw_from_read()
