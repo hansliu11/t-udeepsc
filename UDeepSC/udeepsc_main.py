@@ -46,7 +46,7 @@ def main(args):
     seed_initial(seed=args.seed)
     
     ### wanb init
-    wandb.init(project="udeepsc", name="Non-SIC_msa_1(SNR=12)")
+    wandb.init(project="udeepsc", name="msa_udeepsc(SNR=12)")
     wandbConfig_initial(args)
     ####################################### Get the model
     model = get_model(args)
@@ -72,8 +72,9 @@ def main(args):
     # ta_sel = ['vqa', 'textc', 'imgc']
     ta_sel = ['msa']
     n_user = 3
-    power_constraint = [3.0] * n_user
-    # power_constraint = [1, 5, 10]
+    power_constraint = [1.0] * n_user
+    # power_constraint = [0.18, 1.8]
+    # power_constraint = [0.4, 0.8, 1.6]
     print(f"Power Constraint: {power_constraint} for {n_user} users")
     
     trainset_group = build_dataset_train(is_train=True, ta_sel=ta_sel, args=args)
