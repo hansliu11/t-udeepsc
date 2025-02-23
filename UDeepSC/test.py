@@ -298,7 +298,8 @@ def test_SNR(ta_perform:str, SNRrange:list[int], power_constraint, model_path, a
             y_true, y_pred = [], []
             for (imgs, texts, speechs, targets) in tqdm(dataloader):
                 imgs, texts, speechs, targets = imgs.to(device), texts.to(device), speechs.to(device), targets.to(device)
-                outputs = model(img=imgs, text=texts, ta_perform=ta_perform, power_constraint=power_constraint, test_snr=snr)
+                outputs = model(img=imgs, text=texts, speech=speechs, ta_perform=ta_perform, power_constraint=power_constraint, test_snr=snr)
+                # outputs = model(text=texts, speech=speechs, ta_perform=ta_perform, power_constraint=power_constraint, test_snr=snr)
                 y_pred.append(outputs.detach().cpu().numpy())
                 y_true.append(targets.detach().cpu().numpy())
         
@@ -466,7 +467,7 @@ def main_test_SNR():
     SNRrange = [-6, 12]
     
     metric1 = test_SNR(ta_perform, SNRrange, power_constraint_static, best_model_path1, opts, device, dataloader)
-    # metric4 = test_SNR(ta_perform, SNRrange, power_constraint, best_model_path4, opts, device, dataloader)
+    metric4 = test_SNR(ta_perform, SNRrange, power_constraint, best_model_path4, opts, device, dataloader)
 
 
     # opts.model = 'UDeepSC_NOMA_new_model'
@@ -504,17 +505,9 @@ def main_test_SNR_single():
     power_constraint_static = [1.0, 1.0, 1.0]
     # power_constraint = [0.5, 1, 1.5]
     power_constraint = [0.5, 1.5]
-    result_output = ta_perform + "_result_ImgText"
+    result_output = ta_perform + "_result_ImgSpeech"
 
     print(f"Power Constraint: {power_constraint}")
-    
-    chart_args = {
-        'channel_type' : "AWGN channel",
-        'output': "acc_" + ta_perform,
-        'y_axis': "Accuracy (%)",
-        "y_lim" : [55, 81, 5],
-        # "y_lim" : [20, 62, 10],
-    }
     
     if ta_perform.startswith('imgc'):
         task_fold = 'imgc'
@@ -542,11 +535,11 @@ def main_test_SNR_single():
     folder_pfSIC = Path('./output/' + task_fold_pfSIC)
     
     # udeepsc
-    best_model_path = get_best_checkpoint(folder_pfSIC, "udeepscM3")
+    best_model_path = get_best_checkpoint(folderSIC, "CRSIC")
     print(f'{best_model_path = }')
     
     
-    opts.model = 'UDeepSC_SepCD_model'
+    opts.model = 'UDeepSC_NOMA_new_model'
     opts.ta_perform = ta_perform
     opts.batch_size = 32
     
@@ -574,11 +567,11 @@ def main_test_Modal_SNR():
     power_constraint_static = [1.0, 1.0, 1.0]
     # power_constraint = [0.5, 1, 1.5]
     power_constraint = [0.5, 1.5]
-    result_output = ta_perform + "_result" + "_ImgText"
+    result_output = ta_perform + "_result" + "_ImgSpeech"
     
     chart_args = {
         'channel_type' : "AWGN channel",
-        'output': "acc_" + ta_perform + "_ImgText",
+        'output': "acc_" + ta_perform + "_ImgSpeech",
         'y_axis': "Accuracy (%)",
         "y_lim" : [55, 82, 5],
         # "y_lim" : [20, 62, 10],
@@ -820,7 +813,7 @@ if __name__ == '__main__':
     # main_test1(True)
     # main_test_single()
     # main_test_SNR()
-    main_test_SNR_single()
-    # main_test_Modal_SNR()
+    # main_test_SNR_single()
+    main_test_Modal_SNR()
     # main_test_signals()
     # main_test_draw_from_read()
