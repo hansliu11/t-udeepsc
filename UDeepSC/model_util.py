@@ -738,7 +738,7 @@ class VectorQuantizer(nn.Module):
         return quantized_latents.contiguous(), vq_loss  # [B x L x D]
     
 
-class Channels():
+class Channels():    
     def AWGN_Var(self, Tx_sig, n_std):
         device = Tx_sig.device
         noise = torch.normal(0, n_std/math.sqrt(2), size=Tx_sig.shape).to(device)
@@ -770,8 +770,23 @@ class Channels():
         noise_imag = torch.randn_like(Tx_sig.imag) * torch.sqrt(sigma2 / 2)
         noise = torch.complex(noise_real, noise_imag).to(device)
         return noise.add_(Tx_sig)
+
+    def AWGNMultiChannel(self, Tx_sig: torch.Tensor, SNRdb: float, user_dim_index: int):
+        """
+            AWGN channel for multiple users
+            Superimpose signal before adding noise
+        """
+        dim = tuple(Tx_sig.size()[user_dim_index + 1:-1])
+        batch_size = Tx_sig.size()[0]
+        symbol_dim = Tx_sig.size()[-1]
+        
+        # make superimposed signal
+        Tx_sig = torch.sum(Tx_sig, dim=user_dim_index) 
+        Tx_sig = Tx_sig.view(batch_size, 1, *dim, symbol_dim)
+
+        return self.AWGN(Tx_sig, SNRdb)
  
-    def Rayleigh(self, Tx_sig, n_std):
+    def Rayleigh(self, Tx_sig, SNRdb):
         # slow fading -> all symbol use same channel gain
         device = Tx_sig.device
         shape = Tx_sig.shape
@@ -779,7 +794,7 @@ class Channels():
         H_imag = torch.normal(0, math.sqrt(1/2), size=[1]).to(device)
         H = torch.Tensor([[H_real, -H_imag], [H_imag, H_real]]).to(device)
         Tx_sig = torch.matmul(Tx_sig.view(shape[0], -1, 2), H)
-        Rx_sig = self.AWGN(Tx_sig, n_std)
+        Rx_sig = self.AWGN(Tx_sig, SNRdb)
         # Channel estimation
         Rx_sig = torch.matmul(Rx_sig, torch.inverse(H)).view(shape)
         return Rx_sig
