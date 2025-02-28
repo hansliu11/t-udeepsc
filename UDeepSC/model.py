@@ -801,7 +801,7 @@ class UDeepSC_M3(nn.Module):
             x_spe = x_spe[:,0,:].unsqueeze(1)
             x_spe = self.msa_spe_encoder_to_channel(x_spe)
             x_spe, _ = power_norm_batchwise(x_spe, power)
-            # x_spe = self.transmit(x_spe, noise_snr)
+            x_spe = self.transmit(x_spe, noise_snr)
 
         
         if ta_perform.startswith('img'):
@@ -831,7 +831,7 @@ class UDeepSC_M3(nn.Module):
             x_spe = self.msa_spe_channel_to_decoder(x_spe)
             
             x = torch.cat([x_img,x_text,x_spe], dim=1)
-            # x = torch.cat([x_text, x_spe], dim=1)
+            # x = torch.cat([x_img], dim=1)
             # print(x.shape) # (batch_size, 3, 128)
 
         batch_size = x.shape[0]
@@ -873,7 +873,7 @@ class UDeepSC_M3_withSIC(UDeepSC_M3):
         if(num_users == 1):
             estimated = signal[:, 0, :]
             estimated = channel_decoders[0](estimated)
-            return estimated
+            return [estimated]
         
         if channel_type == "AWGN":
             # Sort users by transmit power (descending order)
@@ -909,7 +909,7 @@ class UDeepSC_M3_withSIC(UDeepSC_M3):
             with torch.no_grad():
                 estimated = channel_encoders[i](estimated)
 
-            estimated_norm, _ = power_norm_batchwise(estimated)
+            estimated_norm, _ = power_norm_batchwise(estimated, power_constraints[i])
 
             if channel_type == "AWGN":
                 signal = signal - estimated_norm
@@ -923,7 +923,7 @@ class UDeepSC_M3_withSIC(UDeepSC_M3):
                  channel_decoders: list[nn.Module]):
         """
             Args:
-                - signal: a complex tensor representing the signals from multiple transmitter (user).
+                - signal: a real tensor representing the signals from multiple transmitter (user).
                         with shape (batch_size, user_dim, *dim, symbol_dim):
                         - user_dim: for users, indexed by user_dim_index
                         - symbol_dim: for signal symbols
@@ -1149,9 +1149,9 @@ class UDeepSC_M3_withSIC(UDeepSC_M3):
             x = torch.stack((x_img, x_text, x_spe), dim=1)
             channel_encoders = [self.msa_text_encoder_to_channel, self.msa_img_encoder_to_channel, self.msa_spe_encoder_to_channel]
             channel_decoders = [self.msa_text_channel_decoder, self.msa_img_channel_decoder, self.msa_spe_channel_decoder]
-            # x = torch.stack((x_text, x_spe), dim=1)
-            # channel_encoders = [self.msa_text_encoder_to_channel, self.msa_spe_encoder_to_channel]
-            # channel_decoders = [self.msa_text_channel_decoder, self.msa_spe_channel_decoder]
+            # x = torch.stack((x_img, torch.zeros_like(x_img)), dim=1)
+            # channel_encoders = [self.msa_img_encoder_to_channel]
+            # channel_decoders = [self.msa_img_channel_decoder]
             Rx_sigs = self.transmit(x, 1, noise_snr, power_constraint, channel_encoders, channel_decoders)
         
         if ta_perform.startswith('img'):
@@ -1175,7 +1175,7 @@ class UDeepSC_M3_withSIC(UDeepSC_M3):
             x_spe = Rx_sigs[2]
             x_spe = self.msa_spe_channel_to_decoder(x_spe)
             
-            # x = torch.cat([x_text, x_spe], dim=1)
+            # x = torch.cat([x_img], dim=1)
             x = torch.cat([x_img, x_text, x_spe], dim=1)
             # print(x.shape) # (batch_size, 3, 128)
 
@@ -1889,7 +1889,7 @@ class UDeepSCUplinkNOMA(nn.Module):
         elif ta_perform.startswith('msa'):
             power = 3
             x = torch.stack((x_img, x_text, x_spe), dim=1)
-            # x = torch.stack((x_text, x_spe), dim=1)
+            # x = torch.stack((x_img, torch.zeros_like(x_img)), dim=1)
             x = self.transmit(x, 1, noise_snr, power)
         
         if ta_perform.startswith('img'):
