@@ -631,7 +631,8 @@ class UDeepSC_M3(nn.Module):
         self.decoder = Decoder(depth=decoder_depth, embed_dim=decoder_embed_dim, 
                                 num_heads=decoder_num_heads, dff=mlp_ratio*decoder_embed_dim, 
                                 drop_rate=drop_rate)
-        self.channel = Channels()
+        # self.channel = Channels()
+        self.channel = AWGNSingleChannel()
         self.sigmoid_layer = nn.Sigmoid()
 
     def _init_weights(self, m):
@@ -651,7 +652,7 @@ class UDeepSC_M3(nn.Module):
         # x = encoder_to_channel(input_signal)
         
         x = tensor_real2complex(x, 'concat')
-        x = self.channel.AWGN(x, SNRdb.item())
+        x = self.channel.interfere(x, SNRdb.item())
         # x = self.channel.Rayleigh(x, SNRdb.item())
         x = tensor_complex2real(x, 'concat')
         
@@ -851,6 +852,12 @@ class UDeepSC_M3(nn.Module):
             return x
 
 class UDeepSC_M3_withSIC(UDeepSC_M3):
+    def __init__(self, *args, **kwargs):
+
+        super().__init__(*args, **kwargs)
+        # self.channel = Channels()
+        self.channel = AWGNMultiChannel()
+
     def SIC(self, signal: torch.Tensor, user_dim_index: int, power_constraints: list[float], 
             channel_encoders: list[nn.Module], channel_decoders: list[nn.Module], 
             channel_type: Literal['AWGN', 'Fading'], h=None):
@@ -933,20 +940,11 @@ class UDeepSC_M3_withSIC(UDeepSC_M3):
         # print(f"Transmid Signal Dim = {signal.shape}")
         signal = tensor_real2complex(signal, 'concat')
         
-        dim = tuple(signal.size()[user_dim_index + 1:-1])
-        batch_size = signal.size()[0]
-        symbol_dim = signal.size()[-1]
-        
-        # make superimposed signal
-        signal = torch.sum(signal, dim=user_dim_index) 
-        signal = signal.view(batch_size, 1, *dim, symbol_dim)
-        
-        # add noise
-        signal = self.channel.AWGN(signal, SNRdb.item())
+        # superimpose and add noise
+        signal = self.channel.interfere(signal, SNRdb.item(), user_dim_index)
         signal = tensor_complex2real(signal, 'concat')
 
         outputs = self.SIC(signal, user_dim_index, power_constraints, channel_encoders, channel_decoders, 'AWGN')
-
 
         return outputs
     
@@ -1766,7 +1764,8 @@ class UDeepSCUplinkNOMA(nn.Module):
         self.decoder = Decoder(depth=decoder_depth, embed_dim=decoder_embed_dim, 
                                 num_heads=decoder_num_heads, dff=mlp_ratio*decoder_embed_dim, 
                                 drop_rate=drop_rate)
-        self.channel = Channels()
+        # self.channel = Channels()
+        self.channel = AWGNMultiChannel()
         self.sigmoid_layer = nn.Sigmoid()
         
     def _init_weights(self, m):
@@ -1793,19 +1792,11 @@ class UDeepSCUplinkNOMA(nn.Module):
                 will have dimension (batch_size, user_dim, *dim, symbol_dim)
         """
         # print(f"Transmid Signal Dim = {signal.shape}")
+        signal, _ = power_norm_batchwise(signal, power_constraint)
         signal = tensor_real2complex(signal, 'concat')
         
-        dim = tuple(signal.size()[user_dim_index + 1:-1])
-        batch_size = signal.size()[0]
-        symbol_dim = signal.size()[-1]
-        
-        # make superimposed signal
-        signal = torch.sum(signal, dim=user_dim_index) 
-        signal = signal.view(batch_size, *dim, symbol_dim)
-        signal, _ = power_norm_batchwise(signal, power_constraint)
-        
-        # add noise
-        signal = self.channel.AWGN(signal, SNRdb.item())
+        # superimpose and add noise
+        signal = self.channel.interfere(signal, SNRdb.item(), user_dim_index)
         signal = tensor_complex2real(signal, 'concat')
 
         return signal
@@ -2086,15 +2077,3 @@ def UDeepSC_NOMANoSIC_model(pretrained=False, **kwargs):
         )
         model.load_state_dict(checkpoint["model"])
     return model
-
-def main_test_SIC():
-    sic = SIC()
-    
-    np.random.seed(42)
-    num_users = 3
-    power_levels = np.array([10, 5, 2])  # Transmit power for each user
-    noise_power = 0.1  # AWGN noise power
-    channel_type = "AWGN"  # Options: "AWGN" or "Rayleigh"
-
-if __name__ == '__main__':
-    main_test_SIC()

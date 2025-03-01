@@ -275,7 +275,7 @@ class AWGNSingleChannel(SingleChannel):
         noise = torch.complex(noise_real, noise_imag).to(device)
         return noise
     
-    def interfere(Tx_sig: torch.Tensor, SNRdb: float) -> torch.Tensor:
+    def interfere(self, Tx_sig: torch.Tensor, SNRdb: float) -> torch.Tensor:
         """
             Args:
                 Tx_sig: complex tensor with any shape
@@ -358,9 +358,9 @@ class AWGNMultiChannel(MultiChannel):
         noise = AWGNSingleChannel.make_awgn_noise(Tx_sig, SNRdb)
 
         # add noise (wrt receiver)
-        signal = signal + noise
+        Tx_sig = Tx_sig + noise
 
-        return signal
+        return Tx_sig
 
 class FadingMultiChannel():
     @staticmethod
@@ -530,8 +530,8 @@ class RayleighFadingMultiChannel(FadingMultiChannel):
         Rayleigh channel implementation
         h^k_{t, r} (C^{1x1}) ~ CN(0, channel_gain_var)
     """
-
     def _make_channel_gain(self, signal: torch.Tensor, user_dim_index: int, channel_gain_var: list[list[float]] | torch.Tensor = None) -> torch.Tensor:
+        # slow fading -> all symbol use same channel gain
         dim1 = tuple(signal.size()[:user_dim_index])
         dim2 = tuple(signal.size()[user_dim_index+1:-1])
         symbol_dim = signal.size()[-1]
