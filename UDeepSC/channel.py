@@ -303,7 +303,7 @@ class RayleighFadingSingleChannel(SingleChannel):
         )
         return channel_gain
     
-    def interfere(self, Tx_sig, SNRdb, channel_gain_var: list[list[float]] | torch.Tensor = None):
+    def interfere(self, signal, SNRdb, channel_gain_var: float | torch.Tensor = None):
         # slow fading -> all symbol use same channel gain
         """
             Args:
@@ -422,7 +422,7 @@ class FadingMultiChannel():
         """
         raise NotImplementedError()
 
-    def interfere(self, signal: torch.Tensor, user_dim_index: int, SNRdb: float | torch.Tensor, noise_tensor: torch.Tensor = None, channel_gain_var: float | torch.Tensor = None, channel_gain_tensor: torch.Tensor = None, interfere_mode: Literal['all', 'self'] = 'all') -> torch.Tensor:
+    def interfere(self, signal: torch.Tensor, user_dim_index: int, SNRdb: float | torch.Tensor, noise_tensor: torch.Tensor = None, channel_gain_var: list[list[float]] | torch.Tensor = None, channel_gain_tensor: torch.Tensor = None, interfere_mode: Literal['all', 'self'] = 'all') -> torch.Tensor:
         """
             Args:
                 signal: a complex tensor representing the signals from multiple transmitter (user).
@@ -450,8 +450,6 @@ class FadingMultiChannel():
         """
 
         self.n_tx = signal.size()[user_dim_index]
-        print(f"num users: {self.n_tx}")
-
 
         if isinstance(channel_gain_var, torch.Tensor):
             channel_gain_var = channel_gain_var.clone().detach()
@@ -493,7 +491,7 @@ class FadingMultiChannel():
             noise = self._make_noise(signal, user_dim_index, SNRdb).to(signal.device)
 
         self.noise = noise.clone().detach().to('cpu')
-        signal += noise
+        signal = signal + noise # prevent using +=, which could cause inplace error
 
         if interfere_mode == 'self':
             if self.n_tx == 1:
@@ -504,25 +502,6 @@ class FadingMultiChannel():
             signal = signal / channel_gain
         
         return signal
-
-    def get_channel_gain(self) -> torch.Tensor:
-        """
-            Return the random channel gain used in the last interfere()
-            Note that if you give channel_gain_tensor parameter in the last interfere(), 
-            then this function will return that tensor
-            Do note that this tensor is on CPU due to not want to occupy GPU memory
-            
-            Return:
-                complex tensor of size (*dim1, self.n_tx, self.n_rx, *dim2, symbol_dim)
-                where dim1, dim2, symbol_dim is determined by the signal used in the last interfere()
-        """
-        return self.channel_gain
-
-    def get_noise(self) -> torch.Tensor:
-        """
-            Roughly the same as get_channel_gain()
-        """
-        return self.noise
     
 
 class RayleighFadingMultiChannel(FadingMultiChannel):
