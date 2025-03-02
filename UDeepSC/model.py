@@ -632,7 +632,8 @@ class UDeepSC_M3(nn.Module):
                                 num_heads=decoder_num_heads, dff=mlp_ratio*decoder_embed_dim, 
                                 drop_rate=drop_rate)
         # self.channel = Channels()
-        self.channel = AWGNSingleChannel()
+        # self.channel = AWGNSingleChannel()
+        self.channel = RayleighFadingSingleChannel()
         self.sigmoid_layer = nn.Sigmoid()
 
     def _init_weights(self, m):
@@ -652,8 +653,8 @@ class UDeepSC_M3(nn.Module):
         # x = encoder_to_channel(input_signal)
         
         x = tensor_real2complex(x, 'concat')
-        x = self.channel.interfere(x, SNRdb.item())
-        # x = self.channel.Rayleigh(x, SNRdb.item())
+        # x = self.channel.interfere(x, SNRdb.item()) # AWGN channel
+        x = self.channel.interfere(x, SNRdb.item(), self.channel_gain_var)
         x = tensor_complex2real(x, 'concat')
         
         return x
@@ -736,7 +737,7 @@ class UDeepSC_M3(nn.Module):
         
         return transmitted, received
     
-    def forward(self, text=None, img=None, speech=None, ta_perform=None, power_constraint:list[float]=[1, 1, 1], test_snr:torch.FloatTensor=torch.FloatTensor([12])):
+    def forward(self, text=None, img=None, speech=None, ta_perform=None, power_constraint:list[float]=[1, 1, 1], test_snr:torch.FloatTensor=torch.FloatTensor([12]), channel_gain_var: float | None = None):
         """
             Input:
                 text: text data (tokenized first) for task need text
@@ -757,6 +758,10 @@ class UDeepSC_M3(nn.Module):
             noise_std = torch.FloatTensor([1]) * 10**(-test_snr/20) 
             noise_snr = test_snr
             # print(f"SNR: {noise_snr}")
+
+        if isinstance(self.channel, RayleighFadingSingleChannel):
+            self.channel_gain_var = 1.0 if channel_gain_var is None else channel_gain_var
+        
         if text is not None:
             ## ##
             x_text = self.text_encoder(ta_perform, text, return_dict=False)[0]
@@ -856,7 +861,8 @@ class UDeepSC_M3_withSIC(UDeepSC_M3):
 
         super().__init__(*args, **kwargs)
         # self.channel = Channels()
-        self.channel = AWGNMultiChannel()
+        # self.channel = AWGNMultiChannel()
+        self.channel = RayleighFadingMultiChannel()
 
     def SIC(self, signal: torch.Tensor, user_dim_index: int, power_constraints: list[float], 
             channel_encoders: list[nn.Module], channel_decoders: list[nn.Module], 
@@ -941,7 +947,13 @@ class UDeepSC_M3_withSIC(UDeepSC_M3):
         signal = tensor_real2complex(signal, 'concat')
         
         # superimpose and add noise
-        signal = self.channel.interfere(signal, SNRdb.item(), user_dim_index)
+        # signal = self.channel.interfere(signal, SNRdb.item(), user_dim_index)
+        signal = self.channel.interfere(
+            signal=signal, 
+            user_dim_index=user_dim_index, 
+            SNRdb=SNRdb.item(), 
+            channel_gain_var=self.channel_gain_var
+        )
         signal = tensor_complex2real(signal, 'concat')
 
         outputs = self.SIC(signal, user_dim_index, power_constraints, channel_encoders, channel_decoders, 'AWGN')
@@ -1061,7 +1073,7 @@ class UDeepSC_M3_withSIC(UDeepSC_M3):
         
         return transmitted, received
 
-    def forward(self, text=None, img=None, speech=None, ta_perform=None, power_constraint:list[float]=[1, 1, 1], test_snr:torch.FloatTensor=torch.FloatTensor([12])):
+    def forward(self, text=None, img=None, speech=None, ta_perform=None, power_constraint:list[float]=[1, 1, 1], test_snr:torch.FloatTensor=torch.FloatTensor([12]), channel_gain_var: list[list[float]] | torch.Tensor = None):
         """
             Input:
                 text: text data (tokenized first) for task need text
@@ -1075,6 +1087,8 @@ class UDeepSC_M3_withSIC(UDeepSC_M3):
                 Ex:
                     Textr: (batch_size, seq length, vocab size) for vacab size = 34000
         """
+
+        n_user = len(power_constraint)
         
         if self.training:
             noise_snr, noise_std = noise_gen(self.training)
@@ -1083,6 +1097,9 @@ class UDeepSC_M3_withSIC(UDeepSC_M3):
             noise_std = torch.FloatTensor([1]) * 10**(-test_snr/20) 
             noise_snr = test_snr
             # print(f"SNR: {noise_snr}")
+        if isinstance(self.channel, RayleighFadingMultiChannel):
+            self.channel_gain_var = [[1.0]] * n_user if channel_gain_var is None else channel_gain_var
+
         if text is not None:
             ## ##
             x_text = self.text_encoder(ta_perform, text, return_dict=False)[0]
@@ -1765,7 +1782,8 @@ class UDeepSCUplinkNOMA(nn.Module):
                                 num_heads=decoder_num_heads, dff=mlp_ratio*decoder_embed_dim, 
                                 drop_rate=drop_rate)
         # self.channel = Channels()
-        self.channel = AWGNMultiChannel()
+        # self.channel = AWGNMultiChannel()
+        self.channel = RayleighFadingMultiChannel()
         self.sigmoid_layer = nn.Sigmoid()
         
     def _init_weights(self, m):
@@ -1796,7 +1814,13 @@ class UDeepSCUplinkNOMA(nn.Module):
         signal = tensor_real2complex(signal, 'concat')
         
         # superimpose and add noise
-        signal = self.channel.interfere(signal, SNRdb.item(), user_dim_index)
+        # signal = self.channel.interfere(signal, SNRdb.item(), user_dim_index)
+        signal = self.channel.interfere(
+            signal=signal, 
+            user_dim_index=user_dim_index, 
+            SNRdb=SNRdb.item(),
+            channel_gain_var=self.channel_gain_var
+        )
         signal = tensor_complex2real(signal, 'concat')
 
         return signal
@@ -1805,7 +1829,7 @@ class UDeepSCUplinkNOMA(nn.Module):
     def no_weight_decay(self):
         return {'pos_embed', 'cls_token', 'mask_token'}
 
-    def forward(self, text=None, img=None, speech=None, ta_perform=None, power_constraint:list[float]=[1, 1, 1], test_snr:torch.FloatTensor=torch.FloatTensor([12])):
+    def forward(self, text=None, img=None, speech=None, ta_perform=None, power_constraint:list[float]=[1, 1, 1], test_snr:torch.FloatTensor=torch.FloatTensor([12]), channel_gain_var: list[list[float]] | torch.Tensor = None):
         """
             Input:
                 text: text data (tokenized first) for task need text
@@ -1819,6 +1843,7 @@ class UDeepSCUplinkNOMA(nn.Module):
                 Ex:
                     Textr: (batch_size, seq length, vocab size) for vacab size = 34000
         """
+        n_user = len(power_constraint)
         
         if self.training:
             noise_snr, noise_std = noise_gen(self.training)
@@ -1826,6 +1851,10 @@ class UDeepSCUplinkNOMA(nn.Module):
         else:
             noise_std = torch.FloatTensor([1]) * 10**(-test_snr/20) 
             noise_snr = test_snr
+
+        if isinstance(self.channel, RayleighFadingMultiChannel):
+            self.channel_gain_var = [[1.0]] * n_user if channel_gain_var is None else channel_gain_var
+
         if text is not None:
             x_text = self.text_encoder(ta_perform, text, return_dict=False)[0]
             power = power_constraint[0]

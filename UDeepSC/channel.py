@@ -546,7 +546,7 @@ class RayleighFadingMultiChannel(FadingMultiChannel):
         return AWGNSingleChannel.make_awgn_noise(signal, SNRdb)
 
 
-def _test_channel_function_class():
+def test_channel_class():
     settings = []
     for n_user in [3]:
         for interference_mode in ['all', 'self']:
@@ -568,4 +568,4 @@ def _test_channel_function_class():
     Uplink()
 
 if __name__ == '__main__':
-    _test_channel_function_class()
+    test_channel_class()
