@@ -409,7 +409,7 @@ def main_test_SNR():
     power_constraint_static = [1.0, 1.0, 1.0]
     power_constraint = [0.5, 1, 1.5]
     # power_constraint = [0.5, 1.5]
-    result_output = ta_perform + "_result_unrelated"
+    result_output = ta_perform + "_result"
     
     chart_args = {
         'channel_type' : "AWGN channel",
@@ -462,7 +462,7 @@ def main_test_SNR():
     best_model_path4 = get_best_checkpoint(folder_pfSIC, "checkpoint")
     print(f'{best_model_path4 = }')
     
-    opts.model = 'UDeepSC_new_model'
+    opts.model = 'UDeepSC_SepCD_model'
     opts.ta_perform = ta_perform
     opts.batch_size = 32
     
@@ -506,9 +506,9 @@ def main_test_SNR_single():
     device = 'cuda:1'
     device = torch.device(device)
     power_constraint_static = [1.0, 1.0, 1.0]
-    # power_constraint = [0.5, 1, 1.5]
-    power_constraint = [0.5]
-    result_output = ta_perform + "_result_Text"
+    power_constraint = [0.5, 1, 1.5]
+    # power_constraint = [0.5]
+    result_output = ta_perform + "_result_Test"
 
     print(f"Power Constraint: {power_constraint}")
     
@@ -538,11 +538,11 @@ def main_test_SNR_single():
     folder_pfSIC = Path('./output/' + task_fold_pfSIC)
     
     # udeepsc
-    best_model_path = get_best_checkpoint(folderSIC, "CRSIC")
+    best_model_path = get_best_checkpoint(folder, "udeepscM3")
     print(f'{best_model_path = }')
     
     
-    opts.model = 'UDeepSC_NOMA_new_model'
+    opts.model = 'UDeepSC_SepCD_model'
     opts.ta_perform = ta_perform
     opts.batch_size = 32
     

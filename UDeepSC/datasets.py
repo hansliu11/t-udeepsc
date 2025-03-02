@@ -1,4 +1,5 @@
 import os
+import random
 import torch
 import numpy as np
 import pandas as pd
@@ -199,6 +200,34 @@ def collate_fn(batch):
     texts = pad_sequence([torch.LongTensor(sample[0][0]) for sample in batch], padding_value=PAD)
     images = pad_sequence([torch.FloatTensor(sample[0][1]) for sample in batch])
     speechs = pad_sequence([torch.FloatTensor(sample[0][2]) for sample in batch])
+    # print(texts.permute(1,0))
+    SENT_LEN = texts.size(0)
+    # Create bert indices using tokenizer
+    bert_details = []
+    for sample in batch:
+        text = " ".join(sample[0][3])
+        encoded_bert_sent = bert_tokenizer.encode_plus(
+            text, max_length=SENT_LEN+2, add_special_tokens=True, pad_to_max_length=True,truncation=True)
+        bert_details.append(encoded_bert_sent)
+
+    bert_sentences = torch.LongTensor([sample["input_ids"] for sample in bert_details])
+    texts = bert_sentences
+
+    return images.permute(1,0,2), texts, speechs.permute(1,0,2), targets
+
+def collate_fn_Shuff(batch):
+    batch = sorted(batch, key=lambda x: x[0][0].shape[0], reverse=True)  
+    targets = torch.cat([torch.from_numpy(sample[1]) for sample in batch], dim=0)
+    texts = pad_sequence([torch.LongTensor(sample[0][0]) for sample in batch], padding_value=PAD)
+    
+    size = len(batch)
+    indices = list(range(len(batch)))
+    # random.shuffle(indices)
+    images = pad_sequence([torch.FloatTensor(batch[(i + 1) % size][0][1]) for i in indices])
+
+    # random.shuffle(indices)
+    speechs = pad_sequence([torch.FloatTensor(batch[(i + 2) % size][0][2]) for i in indices])
+
     # print(texts.permute(1,0))
     SENT_LEN = texts.size(0)
     # Create bert indices using tokenizer
