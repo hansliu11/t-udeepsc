@@ -223,10 +223,10 @@ def collate_fn_Shuff(batch):
     size = len(batch)
     indices = list(range(len(batch)))
     # random.shuffle(indices)
-    images = pad_sequence([torch.FloatTensor(batch[(i + 1) % size][0][1]) for i in indices])
+    images = pad_sequence([torch.FloatTensor(batch[(i + 40) % size][0][1]) for i in indices])
 
     # random.shuffle(indices)
-    speechs = pad_sequence([torch.FloatTensor(batch[(i + 2) % size][0][2]) for i in indices])
+    speechs = pad_sequence([torch.FloatTensor(batch[(i + 40) % size][0][2]) for i in indices])
 
     # print(texts.permute(1,0))
     SENT_LEN = texts.size(0)

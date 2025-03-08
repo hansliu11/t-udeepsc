@@ -632,8 +632,8 @@ class UDeepSC_M3(nn.Module):
                                 num_heads=decoder_num_heads, dff=mlp_ratio*decoder_embed_dim, 
                                 drop_rate=drop_rate)
         # self.channel = Channels()
-        # self.channel = AWGNSingleChannel()
-        self.channel = RayleighFadingSingleChannel()
+        self.channel = AWGNSingleChannel()
+        # self.channel = RayleighFadingSingleChannel()
         self.sigmoid_layer = nn.Sigmoid()
 
     def _init_weights(self, m):
@@ -653,8 +653,8 @@ class UDeepSC_M3(nn.Module):
         # x = encoder_to_channel(input_signal)
         
         x = tensor_real2complex(x, 'concat')
-        # x = self.channel.interfere(x, SNRdb.item()) # AWGN channel
-        x = self.channel.interfere(x, SNRdb.item(), self.channel_gain_var)
+        x = self.channel.interfere(x, SNRdb.item()) # AWGN channel
+        # x = self.channel.interfere(x, SNRdb.item(), self.channel_gain_var)
         x = tensor_complex2real(x, 'concat')
         
         return x
@@ -861,8 +861,8 @@ class UDeepSC_M3_withSIC(UDeepSC_M3):
 
         super().__init__(*args, **kwargs)
         # self.channel = Channels()
-        # self.channel = AWGNMultiChannel()
-        self.channel = RayleighFadingMultiChannel()
+        self.channel = AWGNMultiChannel()
+        # self.channel = RayleighFadingMultiChannel()
 
     def SIC(self, signal: torch.Tensor, user_dim_index: int, power_constraints: list[float], 
             channel_encoders: list[nn.Module], channel_decoders: list[nn.Module], 
@@ -947,13 +947,15 @@ class UDeepSC_M3_withSIC(UDeepSC_M3):
         signal = tensor_real2complex(signal, 'concat')
         
         # superimpose and add noise
-        # signal = self.channel.interfere(signal, SNRdb.item(), user_dim_index)
-        signal = self.channel.interfere(
-            signal=signal, 
-            user_dim_index=user_dim_index, 
-            SNRdb=SNRdb.item(), 
-            channel_gain_var=self.channel_gain_var
-        )
+        signal = self.channel.interfere(signal, SNRdb.item(), user_dim_index)
+        # signal = self.channel.interfere(
+        #     signal=signal, 
+        #     user_dim_index=user_dim_index, 
+        #     SNRdb=SNRdb.item(), 
+        #     channel_gain_var=self.channel_gain_var
+        # )
+        # channel_gain = self.channel.get_channel_gain().to(signal.device)
+        # print(f'{channel_gain.shape= }')
         signal = tensor_complex2real(signal, 'concat')
 
         outputs = self.SIC(signal, user_dim_index, power_constraints, channel_encoders, channel_decoders, 'AWGN')
@@ -1782,8 +1784,8 @@ class UDeepSCUplinkNOMA(nn.Module):
                                 num_heads=decoder_num_heads, dff=mlp_ratio*decoder_embed_dim, 
                                 drop_rate=drop_rate)
         # self.channel = Channels()
-        # self.channel = AWGNMultiChannel()
-        self.channel = RayleighFadingMultiChannel()
+        self.channel = AWGNMultiChannel()
+        # self.channel = RayleighFadingMultiChannel()
         self.sigmoid_layer = nn.Sigmoid()
         
     def _init_weights(self, m):
@@ -1814,13 +1816,13 @@ class UDeepSCUplinkNOMA(nn.Module):
         signal = tensor_real2complex(signal, 'concat')
         
         # superimpose and add noise
-        # signal = self.channel.interfere(signal, SNRdb.item(), user_dim_index)
-        signal = self.channel.interfere(
-            signal=signal, 
-            user_dim_index=user_dim_index, 
-            SNRdb=SNRdb.item(),
-            channel_gain_var=self.channel_gain_var
-        )
+        signal = self.channel.interfere(signal, SNRdb.item(), user_dim_index)
+        # signal = self.channel.interfere(
+        #     signal=signal, 
+        #     user_dim_index=user_dim_index, 
+        #     SNRdb=SNRdb.item(),
+        #     channel_gain_var=self.channel_gain_var
+        # )
         signal = tensor_complex2real(signal, 'concat')
 
         return signal

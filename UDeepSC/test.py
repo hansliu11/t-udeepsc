@@ -409,11 +409,11 @@ def main_test_SNR():
     power_constraint_static = [1.0, 1.0, 1.0]
     power_constraint = [0.5, 1, 1.5]
     # power_constraint = [0.5, 1.5]
-    result_output = ta_perform + "_result"
+    result_output = ta_perform + "_result_shift"
     
     chart_args = {
         'channel_type' : "AWGN channel",
-        'output': "acc_" + ta_perform,
+        'output': "acc_" + ta_perform + "_result_shift",
         'y_axis': "Accuracy (%)",
         "y_lim" : [55, 82, 5],
         # "y_lim" : [20, 62, 10],
@@ -447,7 +447,7 @@ def main_test_SNR():
     folder_pfSIC = Path('./output/' + task_fold_pfSIC)
     
     # udeepsc
-    best_model_path1 = get_best_checkpoint(folder, "checkpoint")
+    best_model_path1 = get_best_checkpoint(folder, "udeepscM3")
     print(f'{best_model_path1 = }')
     
     # udeepsc Noma
@@ -459,14 +459,14 @@ def main_test_SNR():
     print(f'{best_model_path3 = }')
 
     # udeepsc Noma perfect SIC
-    best_model_path4 = get_best_checkpoint(folder_pfSIC, "checkpoint")
+    best_model_path4 = get_best_checkpoint(folder_pfSIC, "udeepscM3")
     print(f'{best_model_path4 = }')
     
     opts.model = 'UDeepSC_SepCD_model'
     opts.ta_perform = ta_perform
     opts.batch_size = 32
     
-    testset, dataloader = get_test_dataloader(opts, shuffle=True)
+    testset, dataloader = get_test_dataloader(opts, shuffle=False)
     SNRrange = [-6, 12]
     
     metric1 = test_SNR(ta_perform, SNRrange, power_constraint_static, best_model_path1, opts, device, dataloader)
@@ -815,8 +815,8 @@ if __name__ == '__main__':
     # main_test1()
     # main_test1(True)
     # main_test_single()
-    main_test_SNR()
-    # main_test_SNR_single()
+    # main_test_SNR()
+    main_test_SNR_single()
     # main_test_Modal_SNR()
     # main_test_signals()
     # main_test_draw_from_read()
