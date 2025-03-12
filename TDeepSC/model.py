@@ -16,7 +16,7 @@ from timm.models.layers import trunc_normal_ as __call_trunc_normal_
 from typing import List, Callable, Union, Any, TypeVar, Tuple
 from model_util import Block, _cfg, PatchEmbed, get_sinusoid_encoding_table
 from model_util import PositionalEncoding, ViTEncoder_imgcr, SPTEncoder,ViTEncoder_vqa,ViTEncoder_msa
-from base_args import IMGC_NUMCLASS,TEXTC_NUMCLASS,IMGR_LENGTH,TEXTR_NUMCLASS,VQA_NUMCLASS,MSA_NUMCLASS
+from base_args import IMGC_NUMCLASS,TEXTC_NUMCLASS,IMGR_LENGTH,TEXTR_NUMCLASS,VQA_NUMCLASS,MSA_NUMCLASS,AVE_NUMCLASS
 
 
 def trunc_normal_(tensor, mean=0., std=1.):
@@ -465,6 +465,79 @@ class TDeepSC_msa(nn.Module):
         x = self.head(x.mean(1))
         return x
 
+class TDeepSC_ave(nn.Module):
+    def __init__(self,mode='tiny',
+                 img_size=224, patch_size=16, encoder_in_chans=3, encoder_num_classes=0, 
+                 encoder_embed_dim=768, encoder_depth=12,encoder_num_heads=12, decoder_num_classes=768, 
+                 decoder_embed_dim=512, decoder_depth=8, decoder_num_heads=8, mlp_ratio=4., 
+                 qkv_bias=False, qk_scale=None, drop_rate=0., attn_drop_rate=0., drop_path_rate=0., 
+                 norm_layer=nn.LayerNorm, init_values=0.,use_learnable_pos_emb=False,num_classes=0, 
+                 ):
+        super().__init__()
+        self.img_encoder = ViTEncoder_ave(img_size=img_size, patch_size=patch_size, in_chans=encoder_in_chans, 
+                                num_classes=encoder_num_classes, embed_dim=encoder_embed_dim,depth=encoder_depth,
+                                num_heads=encoder_num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias,drop_rate=drop_rate, 
+                                drop_path_rate=drop_path_rate,norm_layer=norm_layer, init_values=init_values,
+                                use_learnable_pos_emb=use_learnable_pos_emb)
+        
+        self.spe_encoder = SPTEncoder_ave(in_chans=encoder_in_chans,num_classes=encoder_num_classes, embed_dim=128,
+                                depth=encoder_depth,num_heads=encoder_num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias,drop_rate=drop_rate, 
+                                drop_path_rate=drop_path_rate,norm_layer=norm_layer, init_values=init_values,
+                                use_learnable_pos_emb=use_learnable_pos_emb)
+
+        self.num_symbols_img = 16
+        self.num_symbols_spe = 16
+        
+        self.img_encoder_to_channel = nn.Linear(encoder_embed_dim, self.num_symbols_img)
+        self.spe_encoder_to_channel = nn.Linear(128, self.num_symbols_spe)
+
+        self.img_channel_to_decoder = nn.Linear(self.num_symbols_img, decoder_embed_dim)
+        self.spe_channel_to_decoder = nn.Linear(self.num_symbols_spe, decoder_embed_dim)
+
+
+        self.decoder = Decoder(depth=decoder_depth,embed_dim=decoder_embed_dim, 
+                                   num_heads=decoder_num_heads, dff=mlp_ratio*decoder_embed_dim, drop_rate=drop_rate)
+        self.query_embedd = nn.Embedding(25, decoder_embed_dim)
+        self.head = nn.Linear(decoder_embed_dim, AVE_NUMCLASS)
+
+    def _init_weights(self, m):
+        if isinstance(m, nn.Linear):
+            nn.init.xavier_uniform_(m.weight)
+            if isinstance(m, nn.Linear) and m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.LayerNorm):
+            nn.init.constant_(m.bias, 0)
+            nn.init.constant_(m.weight, 1.0)
+
+    def get_num_layers(self):
+        return len(self.blocks)
+
+    @torch.jit.ignore
+    def no_weight_decay(self):
+        return {'pos_embed', 'cls_token', 'mask_token'}
+
+    def forward(self, text=None, img=None, speech=None, ta_perform=None, test_snr=torch.FloatTensor([-2])):
+        batch_size = img.shape[0]
+        
+        img = img.view(img.size(0) * img.size(1), -1, 512) # (batch_size * time_steps, 49, 512)
+        speech = speech.view(-1, speech.size(-1)) # (batch_size * time_steps, 128)
+
+        x_img = self.img_encoder(img, ta_perform)
+        x_spe = self.spe_encoder(speech, ta_perform)
+
+        x_img = self.img_encoder_to_channel(x_img)
+        x_spe = self.spe_encoder_to_channel(x_spe)
+
+        x_img = self.img_channel_to_decoder(x_img)
+        x_spe = self.spe_channel_to_decoder(x_spe)
+
+        x = torch.cat([x_img,x_spe], dim=1)
+        query_embed = self.query_embedd.weight.unsqueeze(0).repeat(x.shape[0], 1, 1)
+        x = self.decoder(query_embed, x, None, None, None) 
+        x = self.head(x.mean(1))
+        x = x.view(batch_size, -1, x.size(-1))
+        return x
+
 
 @register_model
 def TDeepSC_imgc_model(pretrained=False, **kwargs):
@@ -582,6 +655,29 @@ def TDeepSC_vqa_model(pretrained=False, **kwargs):
 @register_model
 def TDeepSC_msa_model(pretrained=False, **kwargs):
     model = TDeepSC_msa(
+        mode='small',
+        img_size=32,
+        patch_size=4,
+        encoder_embed_dim=384,
+        encoder_depth=4,
+        encoder_num_heads=6,
+        decoder_embed_dim=128,
+        decoder_depth=2,
+        decoder_num_heads=4,
+        mlp_ratio=4,
+        qkv_bias=True,
+        norm_layer=partial(nn.LayerNorm, eps=1e-6),
+        **kwargs)
+    model.default_cfg = _cfg()
+    if pretrained:
+        checkpoint = torch.load(
+            kwargs["init_ckpt"], map_location="cpu"
+        )
+        model.load_state_dict(checkpoint["model"])
+    return model
+@register_model
+def TDeepSC_ave_model(pretrained=False, **kwargs):
+    model = TDeepSC_ave(
         mode='small',
         img_size=32,
         patch_size=4,

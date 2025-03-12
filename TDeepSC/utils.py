@@ -11,6 +11,7 @@ import datetime
 import numpy as np
 import torch.distributed as dist
 import wandb
+import colorama
 
 from pathlib import Path
 from torch import inf
@@ -44,6 +45,11 @@ def sel_criterion(args):
     elif args.ta_perform.startswith('msa'):
         criterion = torch.nn.MSELoss()
         print("criterion for %s Reconstruction = %s" % (args.ta_perform,str(criterion)))
+    elif args.ta_perform.startswith('ave'):
+            criterion = torch.nn.MultiLabelSoftMarginLoss()
+            print("criterion for %s classification = %s" % (args.ta_perform,str(criterion)))
+    else:
+        raise NotImplementedError()
     return criterion
 
 def get_model(args):
@@ -263,6 +269,22 @@ def validation_log(ta_perform, epoch, stats):
         log_data[f'{ta_perform}/{metric}'] = stats[metric]
         
     wandb.log(log_data)
+
+def toColor(text: str, color: str, other: str='') -> str:
+    """
+        Make a colored (ANSI) string.
+        
+        Args:
+            text: your stuff. Can be anything, will be str()-ed
+            color: the color of your text, must be colorama supported. 
+                   e.g. 'yellow', 'cyan'
+            other: other attribute that you wanna add to the string
+                   e.g. colorama.Style.BRIGHT
+        
+        Returns:
+            An ANSI-colored string.
+    """
+    return f'{getattr(colorama.Fore, color.upper())}{other}{text}{colorama.Style.RESET_ALL}'
 
 class NativeScalerWithGradNormCount:
     state_dict_key = "amp_scaler"
@@ -634,8 +656,26 @@ def calc_metrics(y_true, y_pred, mode=None, to_print=True):
             print("Accuracy (non-neg/neg) ", accuracy_score(binary_truth, binary_preds))
         
         return accuracy_score(binary_truth, binary_preds)
-    
-    
+
+def compute_acc_AVE(labels, x_labels, nb_batch):
+    """
+        From https://github.com/YapengTian/AVE-ECCV18/blob/master/supervised_main.py: compute_acc
+    """
+    N = int(nb_batch * 10)
+    pre_labels = np.zeros(N)
+    real_labels = np.zeros(N)
+    c = 0
+    for i in range(nb_batch):
+        for j in range(x_labels.shape[1]): 
+            pre_labels[c] = np.argmax(x_labels[i, j, :])
+            real_labels[c] = np.argmax(labels[i, j, :])
+            c += 1
+    # target_names = []
+    # for i in range(29):
+    #     target_names.append("class" + str(i))
+
+    return accuracy_score(real_labels, pre_labels)    
+
 class DiffPruningLoss(torch.nn.Module):
     def __init__(self, base_criterion: torch.nn.Module, dynamic=True, ratio_weight=2.0, main_weight=1.):
         super().__init__()

@@ -3,6 +3,7 @@ import torch
 import numpy as np
 import pandas as pd
 import torch.utils.data as data
+from typing import Literal
 
 from transformers import BertTokenizer
 from data import CIFAR_CR,SST_CR
@@ -11,6 +12,7 @@ from vqa_utils import VQA2, Config_VQA
 from torch.nn.utils.rnn import pad_sequence
 from torchvision import datasets, transforms
 from msa_utils import PAD, Config_MSA, MSA
+from AVE_utils import AVEDataset, Config_AVE
 # from pytorch_transformers import BertTokenizer
 from torch.utils.data.sampler import RandomSampler
 bert_tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
@@ -58,7 +60,7 @@ class BatchSchedulerSampler(torch.utils.data.sampler.Sampler):
         self.epoch = epoch
 
 
-def build_dataset(is_train, args):
+def build_dataset(is_train, args, split: Literal['val', 'test'] = 'val'):
     if args.ta_perform.startswith('img'):
         transform = build_img_transform(is_train, args)
         print("Transform = ")
@@ -92,6 +94,11 @@ def build_dataset(is_train, args):
     elif args.ta_perform.startswith('msa'):
         config_msa = Config_MSA()
         dataset = MSA(config_msa, train=is_train)
+    
+    elif args.ta_perform.startswith('ave'):
+        split = 'train' if is_train else split
+        config_ave = Config_AVE()
+        dataset = AVEDataset(config_ave, split=split)
     
     else:
         raise NotImplementedError()

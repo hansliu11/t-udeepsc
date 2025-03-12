@@ -459,3 +459,103 @@ def train_epoch_msa(model: torch.nn.Module, criterion: torch.nn.Module,
         'acc': acc_meter.avg}
 
     return train_stat 
+
+@torch.no_grad()
+def evaluate_ave(ta_perform: str, net: torch.nn.Module, dataloader: Iterable, 
+                  device: torch.device, criterion: torch.nn.Module,print_freq=500):
+    net.eval()
+    nb_batch = len(dataloader)
+    loss_meter = AverageMeter()
+    y_true, y_pred = [], []
+    with torch.no_grad():
+        for batch_idx, (imgs, speechs, targets) in enumerate(dataloader):
+            # print(f'{targets.shape= }')
+            imgs, speechs, targets = imgs.to(device), speechs.to(device), targets.to(device)
+            outputs = net(img=imgs, speech=speechs, ta_perform=ta_perform)
+            loss = criterion(outputs, targets)
+            y_pred.append(outputs.detach().cpu().numpy())
+            y_true.append(targets.detach().cpu().numpy())
+            loss_meter.update(loss.item(), 1)
+    
+    y_true = np.concatenate(y_true, axis=0).squeeze()
+    y_pred = np.concatenate(y_pred, axis=0).squeeze()
+    acc = compute_acc_AVE(y_true, y_pred, nb_batch)        
+    test_stat = {'loss':loss_meter.avg,
+                 'acc': acc}
+    return test_stat
+    
+
+def train_class_batch_ave(ta_perform, model, imgs, speechs, targets, criterion):
+    outputs = model(img=imgs, speech=speechs, ta_perform=ta_perform)
+    loss = criterion(outputs, targets)
+
+    return loss, outputs
+
+def train_epoch_ave(model: torch.nn.Module, criterion: torch.nn.Module,
+                data_loader: Iterable, optimizer: torch.optim.Optimizer,
+                device: torch.device, epoch: int, loss_scaler, ta_perform, max_norm: float=0,
+                start_steps=None,lr_schedule_values=None, wd_schedule_values=None, 
+                update_freq=None, print_freq=5):
+    model.train(True)                                                         
+    loss_meter = AverageMeter()
+
+    if loss_scaler is None:    
+        model.zero_grad()
+        model.micro_steps = 0
+    else:
+        optimizer.zero_grad()
+    
+    n_batch = len(data_loader)
+    progress_bar = tqdm(enumerate(data_loader), leave=False, desc='Train', total=n_batch, dynamic_ncols=True)
+    for data_iter_step, (imgs, speechs, targets) in progress_bar:    
+        step = data_iter_step // update_freq
+        it = start_steps + step  
+        if lr_schedule_values is not None or wd_schedule_values is not None and data_iter_step % update_freq == 0:
+            for i, param_group in enumerate(optimizer.param_groups):
+                if lr_schedule_values is not None:
+                    param_group["lr"] = lr_schedule_values[it] * param_group["lr_scale"]                
+                if wd_schedule_values is not None and param_group["weight_decay"] > 0:
+                    param_group["weight_decay"] = wd_schedule_values[it]
+
+        imgs = imgs.to(device, non_blocking=True)
+        speechs = speechs.to(device, non_blocking=True)
+        targets = targets.to(device, non_blocking=True)
+        batch_size = imgs.size(0)        
+                           
+        with torch.amp.autocast('cuda'):
+            loss, outputs = train_class_batch_ave(
+                ta_perform, model, imgs, speechs, targets, criterion)
+        loss_value = loss.item()
+
+        ######  Error                              
+        if not math.isfinite(loss_value):   
+            print("Loss is {}, stopping training".format(loss_value))
+            sys.exit(1)
+        ######  Update
+        if loss_scaler is None:
+            loss /= update_freq
+            model.backward(loss)
+            model.step()
+        else:
+            is_second_order = hasattr(optimizer, 'is_second_order') and optimizer.is_second_order
+            loss /= update_freq
+            grad_norm = loss_scaler(loss, optimizer, clip_grad=max_norm,
+                                    parameters=model.parameters(), create_graph=is_second_order,
+                                    update_grad=(data_iter_step + 1) % update_freq == 0)
+            if (data_iter_step + 1) % update_freq == 0:
+                optimizer.zero_grad()
+
+        torch.cuda.synchronize()    
+
+        min_lr,max_lr = 10., 0.
+        for group in optimizer.param_groups:
+            min_lr,max_lr = min(min_lr, group["lr"]),max(max_lr, group["lr"])
+
+        loss_meter.update(loss_value, 1)
+        
+        # if data_iter_step % print_freq == 0:
+        #     print(toColor(f'Epoch:[{epoch}] {data_iter_step}/{n_batch}: [loss: {loss_meter.avg:.3f}] [lr: {max_lr:.3e}]', 'yellow'))
+              
+    train_stat = {'loss': loss_meter.avg}
+
+    return train_stat 

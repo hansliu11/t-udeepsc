@@ -547,7 +547,66 @@ class ViTEncoder_msa(nn.Module):
         x = self.forward_features(x, ta_perform)
         return x
     
+class ViTEncoder_ave(nn.Module):
+    """ Vision Transformer with support for patch or hybrid CNN input stage
+    """
+    def __init__(self, img_size=224, patch_size=16, in_chans=3, num_classes=0, embed_dim=768, depth=12,
+                 num_heads=12, mlp_ratio=4., qkv_bias=False, qk_scale=None, drop_rate=0., attn_drop_rate=0.,
+                 drop_path_rate=0., norm_layer=nn.LayerNorm, init_values=None,
+                 use_learnable_pos_emb=False):
+        super().__init__()
+        self.num_features = self.embed_dim = embed_dim  # num_features for consistency with other models
+
+        self.linear_embed = nn.Linear(512, self.embed_dim)
+
+        # TODO: Add the cls token
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
+        dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]  # stochastic depth decay rule
+        self.blocks = nn.ModuleList([
+            Block(
+                dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
+                drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer,
+                init_values=init_values)
+            for i in range(depth)])
+        self.norm =  norm_layer(embed_dim)
+        if use_learnable_pos_emb:
+            trunc_normal_(self.pos_embed, std=.02)
+        trunc_normal_(self.cls_token, std=.02)
+        self.apply(self._init_weights)
+
+    def _init_weights(self, m):
+        if isinstance(m, nn.Linear):
+            nn.init.xavier_uniform_(m.weight)
+            if isinstance(m, nn.Linear) and m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.LayerNorm):
+            nn.init.constant_(m.bias, 0)
+            nn.init.constant_(m.weight, 1.0)
+
+    def get_num_layers(self):
+        return len(self.blocks)
+
+    @torch.jit.ignore
+    def no_weight_decay(self):
+        return {'pos_embed', 'cls_token'}
+
+    def __len__(self,):
+        return len()
     
+    def forward_features(self, x, ta_perform):
+        # print(x.shape) # (batch_size * time_steps, 7 * 7, 512)
+        x = self.linear_embed(x)
+        batch_size = x.shape[0]
+        cls_tokens = self.cls_token.expand(batch_size, -1, -1) 
+        x = torch.cat((cls_tokens, x), dim=1)
+        for blk in self.blocks:
+            x = blk(x)
+        x = self.norm(x)
+        return x
+
+    def forward(self, x, ta_perform=None):
+        x = self.forward_features(x, ta_perform)
+        return x    
     
 
 class SPTEncoder(nn.Module):
@@ -594,6 +653,59 @@ class SPTEncoder(nn.Module):
             batch_size = x.shape[0]
             cls_tokens = self.cls_token.expand(batch_size, -1, -1) 
             x = torch.cat((cls_tokens, x), dim=1)
+
+        for blk in self.blocks:
+            x = blk(x)
+        x = self.norm(x)
+        return x
+
+    def forward(self, x, ta_perform=None):
+        x = self.forward_features(x, ta_perform)
+        return x
+    
+class SPTEncoder_ave(nn.Module):
+    """ Vision Transformer with support for patch or hybrid CNN input stage
+    """
+    def __init__(self, in_chans=3, num_classes=0, embed_dim=768, depth=12,
+                 num_heads=12, mlp_ratio=4., qkv_bias=False, qk_scale=None, drop_rate=0., attn_drop_rate=0.,
+                 drop_path_rate=0., norm_layer=nn.LayerNorm, init_values=None,
+                 use_learnable_pos_emb=False):
+        super().__init__()
+        self.num_features = self.embed_dim = embed_dim  # num_features for consistency with other models
+
+        self.linear_embed = nn.Linear(128, self.embed_dim)
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
+
+        dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]  # stochastic depth decay rule
+        self.blocks = nn.ModuleList([
+            Block(
+                dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
+                drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer,
+                init_values=init_values)
+            for i in range(depth)])
+        self.norm =  norm_layer(embed_dim)
+        if use_learnable_pos_emb:
+            trunc_normal_(self.pos_embed, std=.02)
+        trunc_normal_(self.cls_token, std=.02)
+        self.apply(self._init_weights)
+
+    def _init_weights(self, m):
+        if isinstance(m, nn.Linear):
+            nn.init.xavier_uniform_(m.weight)
+            if isinstance(m, nn.Linear) and m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.LayerNorm):
+            nn.init.constant_(m.bias, 0)
+            nn.init.constant_(m.weight, 1.0)
+
+    def get_num_layers(self):
+        return len(self.blocks)
+
+    def forward_features(self, x, ta_perform):
+        x = self.linear_embed(x).unsqueeze(1)
+        batch_size = x.shape[0]
+        cls_tokens = self.cls_token.expand(batch_size, -1, -1) 
+        x = torch.cat((cls_tokens, x), dim=1)
 
         for blk in self.blocks:
             x = blk(x)

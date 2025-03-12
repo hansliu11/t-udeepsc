@@ -43,7 +43,7 @@ def main(args):
     seed_initial(seed=args.seed)
 
     ### wanb init
-    wandb.init(project="tdeepsc", name="vqa_test")
+    wandb.init(project="tdeepsc", name="ave_test")
     wandbConfig_initial(args)
     ####################################### Get the model
     model = get_model(args)
@@ -157,7 +157,9 @@ def main(args):
     print(f"Start training for {args.epochs} epochs")
     max_accuracy = 0.0
     start_time = time.time()
-    for epoch in range(args.start_epoch, args.epochs):
+    progress_bar = tqdm(range(args.start_epoch, args.epochs), leave=False, dynamic_ncols=True)
+    for epoch in progress_bar:
+        progress_bar.set_description(f'Epoch {epoch}/{args.epochs}')
         if args.distributed:
             trainloader.sampler.set_epoch(epoch)
 
@@ -179,9 +181,15 @@ def main(args):
                     args.ta_perform, args.clip_grad,  start_steps=epoch * num_training_steps_per_epoch,
                     lr_schedule_values=lr_schedule_values, wd_schedule_values=wd_schedule_values, 
                     update_freq=args.update_freq)
+        elif args.ta_perform.startswith('ave'):
+            train_stats = train_epoch_ave(
+                    model, criterion, trainloader, optimizer, device, epoch, loss_scaler, 
+                    args.ta_perform, args.clip_grad,  start_steps=epoch * num_training_steps_per_epoch,
+                    lr_schedule_values=lr_schedule_values, wd_schedule_values=wd_schedule_values, 
+                    update_freq=args.update_freq, print_freq=10)
       
         ## logging training using wandb
-        train_log(epoch, train_stats)
+        train_log(epoch + 1, train_stats)
         
         if args.output_dir and args.save_ckpt:
             if (epoch + 1) % args.save_freq == 0 or epoch + 1 == args.epochs:
@@ -189,7 +197,6 @@ def main(args):
                     args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
                     loss_scaler=loss_scaler, epoch=epoch, model_ema=None)
         if dataloader_val is not None:
-            print(args.output_dir)
             if args.ta_perform.startswith('img') or args.ta_perform.startswith('text'):
                 test_stats = evaluate(ta_perform=args.ta_perform, 
                                     net=model, dataloader=dataloader_val, 
@@ -198,11 +205,15 @@ def main(args):
                 test_stats = evaluate_vqa(ta_perform=args.ta_perform, 
                                     net=model, dataloader=dataloader_val, 
                                     device=device, criterion=criterion)
+            elif args.ta_perform.startswith('ave'):
+                test_stats = evaluate_ave(ta_perform=args.ta_perform, 
+                                    net=model, dataloader=dataloader_val, 
+                                    device=device, criterion=criterion)
             else:
                 test_stats = evaluate_msa(ta_perform=args.ta_perform, 
                                     net=model, dataloader=dataloader_val, 
                                     device=device, criterion=criterion)
-            validation_log(args.ta_perform, epoch ,test_stats)
+            validation_log(args.ta_perform, epoch + 1, test_stats)
             
             if args.ta_perform.startswith('imgc') or args.ta_perform.startswith('textc'):
                 print(f"Accuracy of the network on the {len(valset)} test images: {test_stats['acc']*100:.3f}")
@@ -217,6 +228,8 @@ def main(args):
                 print("Per Answer Type Accuracy is the following:")
                 for ansType in test_stats['perAnswerType']:
                     print("%s : %.02f" % (ansType, test_stats['perAnswerType'][ansType]))
+            elif args.ta_perform.startswith('ave'):
+                print("\n" + toColor(f"Validation accuracy of the model on the {len(valset)} test samples: {test_stats['acc']*100:.3f}", 'cyan'))
        
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
