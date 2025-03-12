@@ -58,7 +58,8 @@ def get_test_samples(args, batch_size=5):
 
 def get_test_dataloader(args, batch_size=5):
     """Return testset and test dataloader"""
-    testset = build_dataset(is_train=False, args=args)
+    split = 'test' if args.ta_perform == 'ave' else 'val'
+    testset = build_dataset(is_train=False, args=args, split=split)
 
     sampler_test = torch.utils.data.SequentialSampler(testset)
     Collate_fn = collate_fn if args.ta_perform.startswith('msa') else None 
@@ -74,7 +75,7 @@ def test_SNR(ta_perform:str, SNRrange:list[int], model_path, args,device, datalo
         SNRrange: Test SNR range which is a list with length 2
                     (should be [min SNR,  max SNR])
     """
-    logger.info("Start test different SNR")
+    logger.info("Start test")
     
     args.resume = model_path
     
@@ -139,16 +140,34 @@ def test_SNR(ta_perform:str, SNRrange:list[int], model_path, args,device, datalo
         acc = calc_metrics(y_true, y_pred)       
         
         return acc * 100
+
+    elif ta_perform.startswith('ave'):
+        nb_batch = len(dataloader)
+            
+        y_true, y_pred = [], []
+        for (imgs, speechs, targets) in tqdm(dataloader):
+            imgs, speechs, targets = imgs.to(device), speechs.to(device), targets.to(device)
+            outputs = model(img=imgs, speech=speechs, ta_perform=ta_perform)
+            y_pred.append(outputs.detach().cpu().numpy())
+            y_true.append(targets.detach().cpu().numpy())
+    
+        y_true = np.concatenate(y_true, axis=0).squeeze()
+        y_pred = np.concatenate(y_pred, axis=0).squeeze()
+        acc = compute_acc_AVE(y_true, y_pred, nb_batch)       
+        
+        return acc * 100
     
 def main_test_SNR_single():
     opts = get_args()
-    ta_perform = 'msa'
+    ta_perform = 'ave'
     device = 'cuda:0'
     device = torch.device(device)
     power_constraint_static = [1.0, 1.0, 1.0]
     power_constraint = [0.5, 1, 1.5]
     # power_constraint = [0.5, 1.5]
     result_output = ta_perform + "_result"
+    root = './output'
+    models_dir = Path(root)
     
     chart_args = {
         'channel_type' : "AWGN channel",
@@ -158,21 +177,7 @@ def main_test_SNR_single():
         "y_lim" : [20, 62, 10],
     }
     
-    if ta_perform.startswith('imgc'):
-        task_fold = 'imgc'
-    elif ta_perform.startswith('imgr'):
-        task_fold = 'imgr'
-    elif ta_perform.startswith('textc'):
-        task_fold = 'textc'
-    elif ta_perform.startswith('textr'):
-        task_fold = 'ckpt_textr'
-        task_fold = 'textr_smooth_01'
-    elif ta_perform.startswith('vqa'):
-        task_fold = 'ckpt_vqa'
-    elif ta_perform.startswith('msa'):
-        task_fold = 'ckpt_msa'
-
-    folder = Path('./output'+ '/' + task_fold)
+    folder = models_dir / f'ckpt_{ta_perform}'
     
     # udeepsc
     best_model_path = get_best_checkpoint(folder, "checkpoint")
@@ -181,7 +186,7 @@ def main_test_SNR_single():
     
     opts.model = f'TDeepSC_{ta_perform}_model'
     opts.ta_perform = ta_perform
-    opts.batch_size = 32
+    opts.batch_size = 64
     
     testset, dataloader = get_test_dataloader(opts)
     SNRrange = [-6, 12]
@@ -192,8 +197,13 @@ def main_test_SNR_single():
     
     x = [i for i in range(SNRrange[0], SNRrange[1] + 1)]
     models = [metric1] * len(x)
+    test_setting = {
+        "Title": "AVE task test",
+        "Model": str(best_model_path),
+        "Result": models
+    }
     
-    save_result_JSON(models, result_output)
+    save_result_JSON(test_setting, result_output)
 
 if __name__ == '__main__':
     main_test_SNR_single()

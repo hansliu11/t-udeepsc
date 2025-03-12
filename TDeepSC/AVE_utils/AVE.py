@@ -4,6 +4,7 @@ import torch
 import h5py
 from pathlib import Path
 from torch.utils.data import DataLoader, Dataset
+from loguru import logger
 
 class AVEDataset(Dataset):
     """
@@ -19,6 +20,7 @@ class AVEDataset(Dataset):
         self.audio_dir = self.data_path + '/audio_feature.h5'
         self.label_dir = self.data_path + '/labels.h5'
         self.order_dir = self.data_path + f'/{split}_order.h5'
+        logger.info(f'Loading order from: [{self.order_dir}]')
 
         # Load order
         with h5py.File(self.order_dir, 'r') as hf:
