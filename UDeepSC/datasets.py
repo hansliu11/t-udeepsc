@@ -4,6 +4,7 @@ import torch
 import numpy as np
 import pandas as pd
 import torch.utils.data as data
+from typing import Literal
 
 
 
@@ -14,6 +15,7 @@ from vqa_utils import VQA2, Config_VQA
 from torch.nn.utils.rnn import pad_sequence
 from torchvision import transforms
 from msa_utils import PAD, Config_MSA, MSA
+from AVE_utils import AVEDataset, Config_AVE
 # from pytorch_transformers import BertTokenizer
 from torch.utils.data.sampler import RandomSampler
 bert_tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
@@ -77,7 +79,7 @@ def build_dataloader(ta_sel, trainsets, args):
 
 
 
-def build_dataset_test(is_train, args):
+def build_dataset_test(is_train, args, split: Literal['val', 'test'] = 'val'):
     if args.ta_perform.startswith('img'):
         transform = build_img_transform(is_train, args)
         print("Transform = ")
@@ -118,6 +120,10 @@ def build_dataset_test(is_train, args):
     elif args.ta_perform.startswith('msa'):
         config_msa = Config_MSA()
         dataset = MSA(config_msa, train=is_train)
+    
+    elif args.ta_perform.startswith('ave'):
+        config_ave = Config_AVE()
+        dataset = AVEDataset(config_ave, split=split)
     
     else:
         raise NotImplementedError()
@@ -164,6 +170,10 @@ def build_dataset_train(is_train, ta_sel, args):
         elif ta.startswith('msa'):
             config_msa = Config_MSA()
             dataset = MSA(config_msa, train=is_train)
+
+        elif ta.startswith('ave'):
+            config_ave = Config_AVE()
+            dataset = AVEDataset(config_ave, split='train')
         
         else:
             raise NotImplementedError()
@@ -207,7 +217,7 @@ def collate_fn(batch):
     for sample in batch:
         text = " ".join(sample[0][3])
         encoded_bert_sent = bert_tokenizer.encode_plus(
-            text, max_length=SENT_LEN+2, add_special_tokens=True, pad_to_max_length=True,truncation=True)
+            text, max_length=SENT_LEN+2, add_special_tokens=True, padding='max_length',truncation=True)
         bert_details.append(encoded_bert_sent)
 
     bert_sentences = torch.LongTensor([sample["input_ids"] for sample in bert_details])
