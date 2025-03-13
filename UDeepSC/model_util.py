@@ -416,6 +416,7 @@ class ViTEncoder(nn.Module):
             img_size=224, patch_size=32, in_chans=in_chans, embed_dim=embed_dim)
         self.linear_embed_vqa = nn.Linear(2048, self.embed_dim)
         self.linear_embed_msa = nn.Linear(35, self.embed_dim)
+        self.linear_embed_ave = nn.Linear(512, self.embed_dim)
         num_patches_imgr = self.patch_embed_imgr.num_patches
         num_patches_imgc = self.patch_embed_imgc.num_patches
         # TODO: Add the cls token
@@ -424,12 +425,14 @@ class ViTEncoder(nn.Module):
         self.cls_token['imgc'] = nn.Parameter(torch.zeros(1, 1, embed_dim))
         self.cls_token['vqa'] = nn.Parameter(torch.zeros(1, 1, embed_dim))
         self.cls_token['msa'] = nn.Parameter(torch.zeros(1, 1, embed_dim))
+        self.cls_token['ave'] = nn.Parameter(torch.zeros(1, 1, embed_dim))
 
         self.task_embedd = {}
         self.task_embedd['imgr'] = nn.Parameter(torch.zeros(1, 1, embed_dim))
         self.task_embedd['imgc'] = nn.Parameter(torch.zeros(1, 1, embed_dim))
         self.task_embedd['vqa'] = nn.Parameter(torch.zeros(1, 1, embed_dim))
         self.task_embedd['msa'] = nn.Parameter(torch.zeros(1, 1, embed_dim))
+        self.task_embedd['ave'] = nn.Parameter(torch.zeros(1, 1, embed_dim))
 
         if use_learnable_pos_emb:
             self.pos_embed_imgc = nn.Parameter(torch.zeros(1, num_patches_imgc + 1, embed_dim))
@@ -486,6 +489,13 @@ class ViTEncoder(nn.Module):
             cls_tokens = self.cls_token[ta_perform].expand(batch_size, -1, -1).to(x.device)
             task_embedd = self.task_embedd[ta_perform].expand(batch_size, -1, -1).to(x.device)
             x = torch.cat((cls_tokens, x, task_embedd), dim=1)
+        elif ta_perform.startswith('ave'):
+            # x.shape = (batch_size * time_steps, 7 * 7, 512)
+            x = self.linear_embed_ave(x)
+            batch_size = x.shape[0]
+            cls_tokens = self.cls_token[ta_perform].expand(batch_size, -1, -1).to(x.device)
+            task_embedd = self.task_embedd[ta_perform].expand(batch_size, -1, -1).to(x.device)
+            x = torch.cat((cls_tokens, x, task_embedd), dim=1)
         elif ta_perform.startswith('img'):
             x = self.patch_embed_imgr(x) if ta_perform.startswith('imgr') else self.patch_embed_imgc(x)
             batch_size = x.shape[0]
@@ -520,6 +530,7 @@ class SPTEncoder(nn.Module):
         self.num_features = self.embed_dim = embed_dim  # num_features for consistency with other models
 
         self.linear_embed = nn.Linear(74, self.embed_dim)
+        self.linear_embed_ave = nn.Linear(128, self.embed_dim)
         self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
         self.task_embedd = nn.Parameter(torch.zeros(1, 1, embed_dim))
 
@@ -552,6 +563,12 @@ class SPTEncoder(nn.Module):
     def forward_features(self, x, ta_perform):
         if ta_perform.startswith('msa'):
             x = self.linear_embed(x)
+            batch_size = x.shape[0]
+            cls_tokens = self.cls_token.expand(batch_size, -1, -1).to(x.device) 
+            task_embedd = self.task_embedd.expand(batch_size, -1, -1).to(x.device) 
+            x = torch.cat((cls_tokens, x, task_embedd), dim=1)
+        elif ta_perform.startswith('ave'):
+            x = self.linear_embed_ave(x).unsqueeze(1)
             batch_size = x.shape[0]
             cls_tokens = self.cls_token.expand(batch_size, -1, -1).to(x.device) 
             task_embedd = self.task_embedd.expand(batch_size, -1, -1).to(x.device) 

@@ -164,7 +164,34 @@ def evaluate_vqa(ta_perform: str, net: torch.nn.Module, dataloader: Iterable,
 
     return vqaEval.accuracy
 
+@torch.no_grad()
+def evaluate_ave(ta_perform: str, net: torch.nn.Module, dataloader: Iterable, 
+                  device: torch.device, criterion: torch.nn.Module, power_constraint: list[float], print_freq=500):
+    net.eval()
+    nb_batch = len(dataloader)
+    print(f'{nb_batch= }')
+    loss_meter = AverageMeter()
+    y_true, y_pred = [], []
+    with torch.no_grad():
+        for batch_idx, (imgs, speechs, targets) in enumerate(dataloader):
+            imgs, speechs, targets = imgs.to(device), speechs.to(device), targets.to(device)
+            outputs = net(img=imgs, speech=speechs, ta_perform=ta_perform, power_constraint=power_constraint)
+            loss = criterion(outputs, targets)
+            y_pred.append(outputs.detach().cpu().numpy())
+            y_true.append(targets.detach().cpu().numpy())
+            loss_meter.update(loss.item(), 1)
+    
+    y_true = np.concatenate(y_true, axis=0).squeeze()
+    y_pred = np.concatenate(y_pred, axis=0).squeeze()
+    acc = compute_acc_AVE(y_true, y_pred, nb_batch)        
+    test_stat = {'loss':loss_meter.avg,
+                 'acc': acc}
+    return test_stat
+
 def get_channel_loss(criterion, outputs, targets):
+    """
+        Deprecated
+    """
     total_loss = 0.0
     for out, tar in zip(outputs, targets):
         total_loss += criterion(out, tar)
@@ -172,6 +199,9 @@ def get_channel_loss(criterion, outputs, targets):
     return total_loss
         
 def train_channel_batch_uni(ta_perform, model, sel_batch, targets, criterion, power_constraint: list[float]):
+    """
+        Deprecated
+    """
     loss = 0
     imgs, texts, speechs = sel_batch
     channel_criterion = criterion['channel_decoder']
@@ -236,6 +266,9 @@ def train_class_batch_uni(ta_perform, model, sel_batch, targets, criterion, powe
     elif ta_perform.startswith('msa'):
         outputs = model(img=imgs, text=texts, speech=speechs, ta_perform=ta_perform,power_constraint=power_constraint)
         loss = criterion[ta_perform](outputs, targets) * 8
+    elif ta_perform.startswith('ave'):
+        outputs = model(img=imgs, speech=speechs, ta_perform=ta_perform,power_constraint=power_constraint)
+        loss = criterion[ta_perform](outputs, targets)
     return loss, outputs
 
 def meter(ta_sel):
@@ -256,6 +289,7 @@ def train_channel_epoch_uni(model: torch.nn.Module, criterion: dict,
                 start_steps=None,lr_schedule_values=None, wd_schedule_values=None, 
                 update_freq=None, print_freq=10):
     """
+        Deprecated
         Training phase 1 for training channel decoder in SIC of UDeepSC_NOMA_model
     """
     
@@ -370,10 +404,11 @@ def train_epoch_uni(model: torch.nn.Module, criterion: dict,
     data_iter_step = 0
     num_tasks = len(data_dict)
     data_tuple = [data_loader for data_loader in data_dict.values()]
+    n_batchs = [len(data_loader) for data_loader in data_dict.values()]
     # data_tuple[2],data_tuple[3],data_tuple[4]
     train_stat = {}
         
-    for data_batch in zip(*data_tuple):    
+    for data_batch in zip(*data_tuple): 
         step = data_iter_step // update_freq
         it = start_steps + step  
         if lr_schedule_values is not None or wd_schedule_values is not None and data_iter_step % update_freq == 0:
@@ -386,6 +421,7 @@ def train_epoch_uni(model: torch.nn.Module, criterion: dict,
         ta_index = np.random.randint(num_tasks)
         ta = ta_sel[ta_index]
         data = data_batch[ta_index]
+        n_batch = n_batchs[ta_index]
         if ta.startswith('img'):
             imgs = data[0].to(device, non_blocking=True)
             targets = data[1].to(device, non_blocking=True)
@@ -401,6 +437,10 @@ def train_epoch_uni(model: torch.nn.Module, criterion: dict,
             texts = data[1].to(device, non_blocking=True)
             speechs = data[2].to(device, non_blocking=True)
             targets = data[3].to(device, non_blocking=True)
+        elif ta.startswith('ave'):
+            imgs = data[0].to(device, non_blocking=True)
+            speechs = data[1].to(device, non_blocking=True)
+            targets = data[2].to(device, non_blocking=True)
         else:
             raise NotImplementedError()
         batch_size = targets.shape[0]
@@ -453,6 +493,8 @@ def train_epoch_uni(model: torch.nn.Module, criterion: dict,
         elif ta.startswith('msa'):
             # acc_meter.update((outputs.max(-1)[-1] == targets.max(-1)[-1]).float().mean().item(), n=batch_size)
             loss_meter_dict[ta].update(loss_value, 1)
+        elif ta.startswith('ave'):
+            loss_meter_dict[ta].update(loss_value, 1)
         
         if data_iter_step % print_freq == 0:
             if ta.startswith('imgc'):
@@ -479,6 +521,8 @@ def train_epoch_uni(model: torch.nn.Module, criterion: dict,
                 print('Epoch:[%d] [%s] %d/%d: [loss: %.3f] [lr: %.3e]' 
                     %(epoch, ta, batch_size*data_iter_step, 5000,
                         loss_meter_dict[ta].avg,  max_lr))
+            elif ta.startswith('ave'):
+                print(toColor(f'Epoch:[{epoch}] [{ta}] {data_iter_step}/{n_batch}: [loss: {loss_meter_dict[ta].avg:.3f}] [lr: {max_lr:.3e}]', 'yellow'))
             
     train_stat[ta] = loss_meter_dict[ta].avg  
 

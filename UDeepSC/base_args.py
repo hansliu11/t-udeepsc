@@ -6,6 +6,7 @@ TEXTC_NUMCLASS = 2   # SST Data
 TEXTR_NUMCLASS = 34000  # Size of vacab
 VQA_NUMCLASS = 3129  # number of VQA class
 MSA_NUMCLASS = 1     # number of MSA class
+AVE_NUMCLASS = 29    # number of AVE class
 def get_args():
     parser = argparse.ArgumentParser('U-DeepSC training script', add_help=False)
     parser.add_argument('--batch_size', default=64, type=int)
@@ -91,7 +92,7 @@ def get_args():
     parser.add_argument('--save_ckpt', action='store_true')
     parser.set_defaults(save_ckpt=True)
 
-    parser.add_argument('--ta_perform', default='', choices=['imgc','textc', 'vqa', 'imgr', 'textr', 'msa'],
+    parser.add_argument('--ta_perform', default='', choices=['imgc','textc', 'vqa', 'imgr', 'textr', 'msa', 'ave'],
                         type=str, help='Eval Data')
     parser.add_argument('--log_interval', default=10, type=int, help='logging interval for wandb')
 
