@@ -76,7 +76,9 @@ def get_test_samples(args, batch_size=5):
 
 def get_test_dataloader(args, batch_size=5, shuffle=False):
     """Return testset and test dataloader"""
-    testset = build_dataset_test(is_train=False, args=args)
+    split = 'test' if args.ta_perform == 'ave' else 'val'
+    testset = build_dataset_test(is_train=False, args=args, split=split)
+    
     if args.textr_euro:
         indices = list(range(args.batch_size * 1000))
         testset = Subset(testset, indices)
@@ -312,6 +314,27 @@ def test_SNR(ta_perform:str, SNRrange:list[int], power_constraint, model_path, a
             avg_acc.append(acc * 100)       
         
         return avg_acc
+    
+    elif ta_perform.startswith('ave'):
+        avg_acc = []
+        nb_batch = len(dataloader)
+        for snr in range(SNRrange[0], SNRrange[1] + 1):
+            snr = torch.FloatTensor([snr])
+            logger.info(f"Test SNR = {snr}")
+            
+            y_true, y_pred = [], []
+            for (imgs, speechs, targets) in tqdm(dataloader):
+                imgs, speechs, targets = imgs.to(device), speechs.to(device), targets.to(device)
+                outputs = model(img=imgs, speech=speechs, ta_perform=ta_perform, power_constraint=power_constraint, test_snr=snr)
+                y_pred.append(outputs.detach().cpu().numpy())
+                y_true.append(targets.detach().cpu().numpy())
+        
+            y_true = np.concatenate(y_true, axis=0).squeeze()
+            y_pred = np.concatenate(y_pred, axis=0).squeeze()
+            acc = compute_acc_AVE(y_true, y_pred, nb_batch) 
+            avg_acc.append(acc * 100)       
+        
+        return avg_acc
         
         
 def test_features(ta:str, test_snr: torch.FloatTensor, power_constraint, model_path, args, device, sel_batch):
@@ -421,6 +444,9 @@ def main_test_SNR():
         "msa_upper": 83
     }
     
+    root = './output'
+    models_dir = Path(root)
+    
     if ta_perform.startswith('imgc'):
         task_fold = 'imgc'
     elif ta_perform.startswith('imgr'):
@@ -431,20 +457,20 @@ def main_test_SNR():
         task_fold = 'ckpt_textr'
         task_fold = 'textr_smooth_01'
     elif ta_perform.startswith('vqa'):
-        task_fold = 'udeepsc_vqa'
-        task_fold_noSIC = 'noSIC_vqa'
-        task_fold_SIC = 'NOMA_vqa'
-        task_fold_pfSIC = 'perfectSIC_vqa'
+        folder = models_dir / f'udeepsc_{ta_perform}'
+        folderSIC = models_dir / f'noSIC_{ta_perform}'
+        folder_noSIC = models_dir / f'NOMA_{ta_perform}'
+        folder_pfSIC = models_dir / f'perfectSIC_{ta_perform}'
     elif ta_perform.startswith('msa'):
-        task_fold = 'udeepsc_msa'
-        task_fold_noSIC = 'noSIC_msa'
-        task_fold_SIC = 'NOMA_msa'
-        task_fold_pfSIC = 'perfectSIC_msa'
-
-    folder = Path('./output'+ '/' + task_fold)
-    folderSIC = Path('./output'+ '/' + task_fold_SIC)
-    folder_noSIC = Path('./output/' + task_fold_noSIC)
-    folder_pfSIC = Path('./output/' + task_fold_pfSIC)
+        folder = models_dir / f'udeepsc_{ta_perform}'
+        folderSIC = models_dir / f'noSIC_{ta_perform}'
+        folder_noSIC = models_dir / f'NOMA_{ta_perform}'
+        folder_pfSIC = models_dir / f'perfectSIC_{ta_perform}'
+    elif ta_perform.startswith('ave'):
+        folder = models_dir / f'udeepsc_{ta_perform}'
+        folderSIC = models_dir / f'noSIC_{ta_perform}'
+        folder_noSIC = models_dir / f'NOMA_{ta_perform}'
+        folder_pfSIC = models_dir / f'perfectSIC_{ta_perform}'
     
     # udeepsc
     best_model_path1 = get_best_checkpoint(folder, "udeepscM3")
@@ -502,13 +528,15 @@ def main_test_SNR():
 
 def main_test_SNR_single():
     opts = get_args()
-    ta_perform = 'msa'
+    ta_perform = 'ave'
     device = 'cuda:1'
     device = torch.device(device)
     power_constraint_static = [1.0, 1.0, 1.0]
-    power_constraint = [0.5, 1, 1.5]
+    power_constraint = [0.5, 1.5]
     # power_constraint = [0.5]
-    result_output = ta_perform + "_result_Test"
+    result_output = ta_perform + "_result_test"
+    root = './output'
+    models_dir = Path(root)
 
     print(f"Power Constraint: {power_constraint}")
     
@@ -522,20 +550,20 @@ def main_test_SNR_single():
         task_fold = 'ckpt_textr'
         task_fold = 'textr_smooth_01'
     elif ta_perform.startswith('vqa'):
-        task_fold = 'udeepsc_vqa'
-        task_fold_noSIC = 'noSIC_vqa'
-        task_fold_SIC = 'NOMA_vqa'
-        task_fold_pfSIC = 'perfectSIC_vqa'
+        folder = models_dir / f'udeepsc_{ta_perform}'
+        folderSIC = models_dir / f'noSIC_{ta_perform}'
+        folder_noSIC = models_dir / f'NOMA_{ta_perform}'
+        folder_pfSIC = models_dir / f'perfectSIC_{ta_perform}'
     elif ta_perform.startswith('msa'):
-        task_fold = 'udeepsc_msa'
-        task_fold_noSIC = 'noSIC_msa'
-        task_fold_SIC = 'NOMA_msa'
-        task_fold_pfSIC = 'perfectSIC_msa'
-
-    folder = Path('./output'+ '/' + task_fold)
-    folderSIC = Path('./output'+ '/' + task_fold_SIC)
-    folder_noSIC = Path('./output/' + task_fold_noSIC)
-    folder_pfSIC = Path('./output/' + task_fold_pfSIC)
+        folder = models_dir / f'udeepsc_{ta_perform}'
+        folderSIC = models_dir / f'noSIC_{ta_perform}'
+        folder_noSIC = models_dir / f'NOMA_{ta_perform}'
+        folder_pfSIC = models_dir / f'perfectSIC_{ta_perform}'
+    elif ta_perform.startswith('ave'):
+        folder = models_dir / f'udeepsc_{ta_perform}'
+        folderSIC = models_dir / f'noSIC_{ta_perform}'
+        folder_noSIC = models_dir / f'NOMA_{ta_perform}'
+        folder_pfSIC = models_dir / f'perfectSIC_{ta_perform}'
     
     # udeepsc
     best_model_path = get_best_checkpoint(folder, "udeepscM3")
@@ -544,7 +572,7 @@ def main_test_SNR_single():
     
     opts.model = 'UDeepSC_SepCD_model'
     opts.ta_perform = ta_perform
-    opts.batch_size = 32
+    opts.batch_size = 16
     
     testset, dataloader = get_test_dataloader(opts)
     SNRrange = [-6, 12]
@@ -554,6 +582,7 @@ def main_test_SNR_single():
     
     models = [metric1]
     test_setting = {
+        "Title": "AVE task test",
         "Model": str(best_model_path),
         "Result": models
     }
@@ -581,8 +610,11 @@ def main_test_Modal_SNR():
         "msa_upper": 83
     }
     
+    root = './output'
+    models_dir = Path(root)
+    
     if ta_perform.startswith('imgc'):
-        task_fold = 'ckpt_imgc'
+        task_fold = 'imgc'
     elif ta_perform.startswith('imgr'):
         task_fold = 'imgr'
     elif ta_perform.startswith('textc'):
@@ -591,20 +623,20 @@ def main_test_Modal_SNR():
         task_fold = 'ckpt_textr'
         task_fold = 'textr_smooth_01'
     elif ta_perform.startswith('vqa'):
-        task_fold = 'udeepsc_vqa'
-        task_fold_noSIC = 'noSIC_vqa'
-        task_fold_SIC = 'NOMA_vqa'
-        task_fold_pfSIC = 'perfectSIC_vqa'
+        folder = models_dir / f'udeepsc_{ta_perform}'
+        folderSIC = models_dir / f'noSIC_{ta_perform}'
+        folder_noSIC = models_dir / f'NOMA_{ta_perform}'
+        folder_pfSIC = models_dir / f'perfectSIC_{ta_perform}'
     elif ta_perform.startswith('msa'):
-        task_fold = 'udeepsc_msa'
-        task_fold_noSIC = 'noSIC_msa'
-        task_fold_SIC = 'NOMA_msa'
-        task_fold_pfSIC = 'perfectSIC_msa'
-
-    folder = Path('./output'+ '/' + task_fold)
-    folderSIC = Path('./output'+ '/' + task_fold_SIC)
-    folder_noSIC = Path('./output/' + task_fold_noSIC)
-    folder_pfSIC = Path('./output/' + task_fold_pfSIC)
+        folder = models_dir / f'udeepsc_{ta_perform}'
+        folderSIC = models_dir / f'noSIC_{ta_perform}'
+        folder_noSIC = models_dir / f'NOMA_{ta_perform}'
+        folder_pfSIC = models_dir / f'perfectSIC_{ta_perform}'
+    elif ta_perform.startswith('ave'):
+        folder = models_dir / f'udeepsc_{ta_perform}'
+        folderSIC = models_dir / f'noSIC_{ta_perform}'
+        folder_noSIC = models_dir / f'NOMA_{ta_perform}'
+        folder_pfSIC = models_dir / f'perfectSIC_{ta_perform}'
     
     # udeepsc
     best_model_path1 = get_best_checkpoint(folder, "udeepscM3")
