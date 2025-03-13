@@ -46,7 +46,7 @@ def main(args):
     seed_initial(seed=args.seed)
     
     ### wanb init
-    wandb.init(project="udeepsc", name="msa_udeepsc(SNR=12)")
+    wandb.init(project="udeepsc", name="ave_perfectSIC(SNR=12)")
     wandbConfig_initial(args)
     ####################################### Get the model
     model = get_model(args)
@@ -70,10 +70,10 @@ def main(args):
         ta_sel: select the task for training
     '''
     # ta_sel = ['vqa', 'textc', 'imgc']
-    ta_sel = ['msa']
-    n_user = 3
-    power_constraint = [1.0] * n_user
-    # power_constraint = [0.18, 1.8]
+    ta_sel = ['ave']
+    n_user = 2
+    # power_constraint = [1.0] * n_user
+    power_constraint = [1.8, 0.18]
     # power_constraint = [0.4, 0.8, 1.6]
     print(f"Power Constraint: {power_constraint} for {n_user} users")
     
@@ -154,7 +154,9 @@ def main(args):
     print(f"Start training for {args.epochs} epochs")
     max_accuracy = 0.0
     start_time = time.time()
-    for epoch in range(args.start_epoch, args.epochs):
+    progress_bar = tqdm(range(args.start_epoch, args.epochs), leave=False, dynamic_ncols=True)
+    for epoch in progress_bar:
+        progress_bar.set_description(f'Epoch {epoch}/{args.epochs}')
         if args.distributed:
             for trainloader in trainloader_group.values():
                 trainloader.sampler.set_epoch(epoch)
@@ -197,13 +199,13 @@ def main(args):
 
         else:
             train_stats = train_epoch_uni(
-                model, criterion_train, trainloader_group, optimizer, device, epoch, loss_scaler, 
+                model, criterion_train, trainloader_group, optimizer, device, epoch + 1, loss_scaler, 
                 ta_sel, power_constraint=power_constraint, max_norm=args.clip_grad,  start_steps=epoch * num_training_steps_per_epoch,
                 lr_schedule_values=lr_schedule_values, wd_schedule_values=wd_schedule_values, 
                 update_freq=args.update_freq)
 
         ## logging training using wandb
-        train_log(epoch, train_stats)
+        train_log(epoch + 1, train_stats)
         
         inter_time = time.time() - start_time
         inter_time_str = str(datetime.timedelta(seconds=int(inter_time)))
@@ -215,7 +217,6 @@ def main(args):
                     args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
                     loss_scaler=loss_scaler, epoch=epoch, model_ema=None)
         if dataloader_val is not None:
-            print(args.output_dir)
             if args.ta_perform.startswith('img') or args.ta_perform.startswith('text'):
                 test_stats = evaluate(ta_perform=args.ta_perform, 
                                     net=model, dataloader=dataloader_val, 
@@ -224,11 +225,15 @@ def main(args):
                 test_stats = evaluate_vqa(ta_perform=args.ta_perform, 
                                     net=model, dataloader=dataloader_val, 
                                     device=device, criterion=criterion_test, power_constraint=power_constraint)
+            elif args.ta_perform.startswith('ave'):
+                test_stats = evaluate_ave(ta_perform=args.ta_perform, 
+                                    net=model, dataloader=dataloader_val, 
+                                    device=device, criterion=criterion_test, power_constraint=power_constraint)
             else:
                 test_stats = evaluate_msa(ta_perform=args.ta_perform, 
                                     net=model, dataloader=dataloader_val, 
                                     device=device, criterion=criterion_test, power_constraint=power_constraint)
-            validation_log(args.ta_perform, epoch ,test_stats)
+            validation_log(args.ta_perform, epoch + 1,test_stats)
             
             if args.ta_perform.startswith('imgc') or args.ta_perform.startswith('textc'):
                 print(f"Accuracy of the network on the {len(valset)} test images: {test_stats['acc']*100:.3f}")
@@ -243,6 +248,8 @@ def main(args):
                 print("Per Answer Type Accuracy is the following:")
                 for ansType in test_stats['perAnswerType']:
                     print("%s : %.02f" % (ansType, test_stats['perAnswerType'][ansType]))
+            elif args.ta_perform.startswith('ave'):
+                print(toColor(f"Validation accuracy of the model on the {len(valset)} test samples: {test_stats['acc']*100:.3f}", 'cyan'))
        
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
