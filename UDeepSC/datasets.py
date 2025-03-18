@@ -79,7 +79,7 @@ def build_dataloader(ta_sel, trainsets, args):
 
 
 
-def build_dataset_test(is_train, args, split: Literal['val', 'test'] = 'val'):
+def build_dataset_test(is_train, args, split: Literal['val', 'test'] = 'val', infra: bool = False):
     if args.ta_perform.startswith('img'):
         transform = build_img_transform(is_train, args)
         print("Transform = ")
@@ -123,7 +123,7 @@ def build_dataset_test(is_train, args, split: Literal['val', 'test'] = 'val'):
     
     elif args.ta_perform.startswith('ave'):
         config_ave = Config_AVE()
-        dataset = AVEDataset(config_ave, split=split)
+        dataset = AVEDataset(config_ave, split=split, add_infra=infra)
     
     else:
         raise NotImplementedError()
@@ -173,7 +173,7 @@ def build_dataset_train(is_train, ta_sel, args):
 
         elif ta.startswith('ave'):
             config_ave = Config_AVE()
-            dataset = AVEDataset(config_ave, split='train')
+            dataset = AVEDataset(config_ave, split='train', add_infra=True)
         
         else:
             raise NotImplementedError()
@@ -227,15 +227,17 @@ def collate_fn(batch):
 
 def collate_fn_Shuff(batch):
     batch = sorted(batch, key=lambda x: x[0][0].shape[0], reverse=True)  
-    targets = torch.cat([torch.from_numpy(sample[1]) for sample in batch], dim=0)
-    texts = pad_sequence([torch.LongTensor(sample[0][0]) for sample in batch], padding_value=PAD)
-    
     size = len(batch)
     indices = list(range(len(batch)))
     # random.shuffle(indices)
+    
+    targets = torch.cat([torch.from_numpy(sample[1]) for sample in batch], dim=0)
+    texts = pad_sequence([torch.LongTensor(sample[0][0]) for sample in batch], padding_value=PAD)
+    # texts = pad_sequence([torch.LongTensor(batch[(i + 40) % size][0][0]) for i in indices], padding_value=PAD) 
+    # images = pad_sequence([torch.FloatTensor(sample[0][1]) for sample in batch])
     images = pad_sequence([torch.FloatTensor(batch[(i + 40) % size][0][1]) for i in indices])
-
     # random.shuffle(indices)
+    # speechs = pad_sequence([torch.FloatTensor(sample[0][2]) for sample in batch])
     speechs = pad_sequence([torch.FloatTensor(batch[(i + 40) % size][0][2]) for i in indices])
 
     # print(texts.permute(1,0))

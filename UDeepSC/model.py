@@ -14,7 +14,7 @@ from timm.models.registry import register_model
 from timm.models.layers import trunc_normal_ as __call_trunc_normal_
 from transformers import BertModel
 from model_util import Block, _cfg, PatchEmbed, get_sinusoid_encoding_table
-from base_args import IMGC_NUMCLASS,TEXTC_NUMCLASS,IMGR_LENGTH,TEXTR_NUMCLASS,VQA_NUMCLASS,MSA_NUMCLASS, AVE_NUMCLASS
+from base_args import IMGC_NUMCLASS,TEXTC_NUMCLASS,IMGR_LENGTH,TEXTR_NUMCLASS,VQA_NUMCLASS,MSA_NUMCLASS
 
 
 def trunc_normal_(tensor, mean=0., std=1.):
@@ -548,8 +548,6 @@ class UDeepSC_M3(nn.Module):
                  ):
 
         super(UDeepSC_M3, self).__init__()
-
-        # self.decoder_embed_dim = decoder_embed_dim
         
         if mode=='tiny':
             text_embed_dim = 128
@@ -593,8 +591,6 @@ class UDeepSC_M3(nn.Module):
         self.msa_img_encoder_to_channel =   nn.Linear(img_embed_dim, self.num_symbols)
         self.msa_text_encoder_to_channel =  nn.Linear(text_embed_dim, self.num_symbols)
         self.msa_spe_encoder_to_channel =   nn.Linear(speech_embed_dim, self.num_symbols)
-        self.ave_img_encoder_to_channel =   nn.Linear(img_embed_dim, self.num_symbols)
-        self.ave_spe_encoder_to_channel =   nn.Linear(speech_embed_dim, self.num_symbols)
         
         # channel decoder
         self.textc_channel_decoder = ChannelDecoder(self.num_symbols, text_embed_dim)
@@ -604,8 +600,6 @@ class UDeepSC_M3(nn.Module):
         self.msa_img_channel_decoder  = ChannelDecoder(self.num_symbols, img_embed_dim)
         self.msa_text_channel_decoder = ChannelDecoder(self.num_symbols, text_embed_dim)
         self.msa_spe_channel_decoder  = ChannelDecoder(self.num_symbols, speech_embed_dim)
-        self.ave_img_channel_decoder  = ChannelDecoder(self.num_symbols, img_embed_dim)
-        self.ave_spe_channel_decoder  = ChannelDecoder(self.num_symbols, speech_embed_dim)
 
         self.textc_channel_to_decoder  =    nn.Linear(text_embed_dim, decoder_embed_dim)
         self.imgc_channel_to_decoder  =     nn.Linear(img_embed_dim, decoder_embed_dim)
@@ -614,8 +608,6 @@ class UDeepSC_M3(nn.Module):
         self.msa_img_channel_to_decoder  =  nn.Linear(img_embed_dim, decoder_embed_dim)
         self.msa_text_channel_to_decoder  = nn.Linear(text_embed_dim, decoder_embed_dim)
         self.msa_spe_channel_to_decoder  =  nn.Linear(speech_embed_dim, decoder_embed_dim)
-        self.ave_img_channel_to_decoder  =  nn.Linear(img_embed_dim, decoder_embed_dim)
-        self.ave_spe_channel_to_decoder = nn.Linear(speech_embed_dim, decoder_embed_dim)
         
 
         self.task_dict = nn.ModuleDict()
@@ -625,7 +617,6 @@ class UDeepSC_M3(nn.Module):
         self.task_dict['vqa'] = nn.Embedding(25, decoder_embed_dim)
         self.task_dict['msa']  = nn.Embedding(25, decoder_embed_dim)
         self.task_dict['textr'] = nn.Embedding(66, decoder_embed_dim)
-        self.task_dict['ave'] = nn.Embedding(25, decoder_embed_dim)
 
 
         self.head = nn.ModuleDict()
@@ -635,7 +626,6 @@ class UDeepSC_M3(nn.Module):
         self.head['vqa'] = nn.Linear(decoder_embed_dim, VQA_NUMCLASS)
         self.head['imgr'] = nn.Linear(decoder_embed_dim, IMGR_LENGTH)
         self.head['msa'] = nn.Linear(decoder_embed_dim, MSA_NUMCLASS)
-        self.head['ave'] = nn.Linear(decoder_embed_dim, AVE_NUMCLASS)
 
 
         self.decoder = Decoder(depth=decoder_depth, embed_dim=decoder_embed_dim, 
@@ -792,10 +782,6 @@ class UDeepSC_M3(nn.Module):
 
             
         if img is not None:
-            AVE_batch_size = img.shape[0]
-            if ta_perform.startswith('ave'):
-                img = img.view(img.size(0) * img.size(1), -1, 512) # (batch_size * time_steps, 49, 512)
-
             x_img = self.img_encoder(img, ta_perform)
             if ta_perform.startswith('imgc'):
                 power = power_constraint[0]
@@ -812,29 +798,14 @@ class UDeepSC_M3(nn.Module):
                 x_img = x_img[:,0,:].unsqueeze(1)
                 x_img = self.msa_img_encoder_to_channel(x_img)
 
-            elif ta_perform.startswith('ave'):
-                power = power_constraint[0]
-                x_img = x_img[:,0,:].unsqueeze(1)
-                x_img = self.ave_img_encoder_to_channel(x_img)
-
             x_img, _ = power_norm_batchwise(x_img, power)
             x_img = self.transmit(x_img, noise_snr)
 
         if speech is not None:
-            if ta_perform.startswith('ave'):
-                speech = speech.view(-1, speech.size(-1)) # (batch_size * time_steps, 128)
-
+            power = power_constraint[2]
             x_spe = self.spe_encoder(speech, ta_perform)
-            if ta_perform.startswith('msa'):
-                power = power_constraint[2]
-                x_spe = x_spe[:,0,:].unsqueeze(1)
-                x_spe = self.msa_spe_encoder_to_channel(x_spe)
-            
-            elif ta_perform.startswith('ave'):
-                power = power_constraint[1]
-                x_spe = x_spe[:,0,:].unsqueeze(1)
-                x_spe = self.ave_spe_encoder_to_channel(x_spe)
-            
+            x_spe = x_spe[:,0,:].unsqueeze(1)
+            x_spe = self.msa_spe_encoder_to_channel(x_spe)
             x_spe, _ = power_norm_batchwise(x_spe, power)
             x_spe = self.transmit(x_spe, noise_snr)
 
@@ -856,26 +827,17 @@ class UDeepSC_M3(nn.Module):
 
             x = torch.cat([x_img,x_text], dim=1)
         elif ta_perform.startswith('msa'):
-            x_text = self.msa_text_channel_decoder(x_text)
-            x_text = self.msa_text_channel_to_decoder(x_text)
+            x_text = self.vqa_text_channel_decoder(x_text)
+            x_text = self.vqa_text_channel_to_decoder(x_text)
 
-            x_img = self.msa_img_channel_decoder(x_img)
-            x_img = self.msa_img_channel_to_decoder(x_img)
+            x_img = self.vqa_img_channel_decoder(x_img)
+            x_img = self.vqa_img_channel_to_decoder(x_img)
 
             x_spe = self.msa_spe_channel_decoder(x_spe)
             x_spe = self.msa_spe_channel_to_decoder(x_spe)
             
             x = torch.cat([x_img,x_text,x_spe], dim=1)
             # x = torch.cat([x_img], dim=1)
-            # print(x.shape) # (batch_size, 3, 128)
-        elif ta_perform.startswith('ave'):
-            x_img = self.ave_img_channel_decoder(x_img)
-            x_img = self.ave_img_channel_to_decoder(x_img)
-
-            x_spe = self.ave_spe_channel_decoder(x_spe)
-            x_spe = self.ave_spe_channel_to_decoder(x_spe)
-            
-            x = torch.cat([x_img, x_spe], dim=1)
             # print(x.shape) # (batch_size, 3, 128)
 
         batch_size = x.shape[0]
@@ -890,8 +852,6 @@ class UDeepSC_M3(nn.Module):
                 x = self.head[ta_perform](x)
             else:
                 x = self.head[ta_perform](x.mean(1))
-                if ta_perform.startswith('ave'):
-                    x = x.view(AVE_batch_size, -1, x.size(-1))
             if ta_perform.startswith('vqa'):
                 x = self.sigmoid_layer(x)
             return x
@@ -1160,10 +1120,6 @@ class UDeepSC_M3_withSIC(UDeepSC_M3):
             x_text, _ = power_norm_batchwise(x_text, power)
             
         if img is not None:
-            AVE_batch_size = img.shape[0]
-            if ta_perform.startswith('ave'):
-                img = img.view(img.size(0) * img.size(1), -1, 512) # (batch_size * time_steps, 49, 512)
-
             x_img = self.img_encoder(img, ta_perform)
             if ta_perform.startswith('imgc'):
                 power = power_constraint[0]
@@ -1180,27 +1136,14 @@ class UDeepSC_M3_withSIC(UDeepSC_M3):
                 x_img = x_img[:,0,:].unsqueeze(1)
                 x_img = self.msa_img_encoder_to_channel(x_img)
 
-            elif ta_perform.startswith('ave'):
-                power = power_constraint[0]
-                x_img = x_img[:,0,:].unsqueeze(1)
-                x_img = self.ave_img_encoder_to_channel(x_img)
-
             x_img, _ = power_norm_batchwise(x_img, power)
 
         if speech is not None:
-            if ta_perform.startswith('ave'):
-                speech = speech.view(-1, speech.size(-1)) # (batch_size * time_steps, 128)
-
+            power = power_constraint[2]
             x_spe = self.spe_encoder(speech, ta_perform)
-            if ta_perform.startswith('msa'):
-                power = power_constraint[2]
-                x_spe = x_spe[:,0,:].unsqueeze(1)
-                x_spe = self.msa_spe_encoder_to_channel(x_spe)
-            
-            elif ta_perform.startswith('ave'):
-                power = power_constraint[1]
-                x_spe = x_spe[:,0,:].unsqueeze(1)
-                x_spe = self.ave_spe_encoder_to_channel(x_spe)
+            x_spe = x_spe[:,0,:].unsqueeze(1)
+            x_spe = self.msa_spe_encoder_to_channel(x_spe)
+            x_spe, _ = power_norm_batchwise(x_spe, power)
 
         if ta_perform.startswith('img'):
             power_constraint = [1]
@@ -1226,12 +1169,6 @@ class UDeepSC_M3_withSIC(UDeepSC_M3):
             # x = torch.stack((x_img, torch.zeros_like(x_img)), dim=1)
             # channel_encoders = [self.msa_img_encoder_to_channel]
             # channel_decoders = [self.msa_img_channel_decoder]
-            Rx_sigs = self.transmit(x, 1, noise_snr, power_constraint, channel_encoders, channel_decoders)
-
-        elif ta_perform.startswith('ave'):
-            x = torch.stack((x_img, x_spe), dim=1)
-            channel_encoders = [self.ave_img_encoder_to_channel, self.ave_spe_encoder_to_channel]
-            channel_decoders = [self.ave_img_channel_decoder, self.ave_spe_channel_decoder]
             Rx_sigs = self.transmit(x, 1, noise_snr, power_constraint, channel_encoders, channel_decoders)
         
         if ta_perform.startswith('img'):
@@ -1259,15 +1196,6 @@ class UDeepSC_M3_withSIC(UDeepSC_M3):
             x = torch.cat([x_img, x_text, x_spe], dim=1)
             # print(x.shape) # (batch_size, 3, 128)
 
-        elif ta_perform.startswith('ave'):
-            x_img = Rx_sigs[0]
-            x_img = self.ave_img_channel_to_decoder(x_img)
-            x_spe = Rx_sigs[1]
-            x_spe = self.ave_spe_channel_to_decoder(x_spe)
-            
-            x = torch.cat([x_img, x_spe], dim=1)
-            # print(x.shape) # (batch_size, 3, 128)
-
         batch_size = x.shape[0]
         if ta_perform.endswith('r'):
             x = self.decoder(x, x, None, None, None) 
@@ -1280,8 +1208,6 @@ class UDeepSC_M3_withSIC(UDeepSC_M3):
                 x = self.head[ta_perform](x)
             else:
                 x = self.head[ta_perform](x.mean(1))
-                if ta_perform.startswith('ave'):
-                    x = x.view(AVE_batch_size, -1, x.size(-1))
             if ta_perform.startswith('vqa'):
                 x = self.sigmoid_layer(x)
             return x
@@ -1766,8 +1692,8 @@ class UDeepSCUplinkNOMAwithSIC(nn.Module):
 
 class UDeepSCUplinkNOMA(nn.Module):
     """
-        UDeepSC non-orthogonal version without signal detection
-        (signals are superimposed)
+        UDeepSC non-orthogonal version
+        (Signals are superimposed)
     """
     def __init__(self,mode='tiny',
                  img_size=224, patch_size=16, encoder_in_chans=3, encoder_num_classes=0, 
@@ -1821,9 +1747,10 @@ class UDeepSCUplinkNOMA(nn.Module):
         self.msa_img_encoder_to_channel =   nn.Linear(img_embed_dim, self.num_antennas)
         self.msa_text_encoder_to_channel =  nn.Linear(text_embed_dim, self.num_antennas)
         self.msa_spe_encoder_to_channel =   nn.Linear(speech_embed_dim, self.num_antennas)
-        self.ave_img_encoder_to_channel =   nn.Linear(img_embed_dim, self.num_antennas)
-        self.ave_spe_encoder_to_channel =   nn.Linear(speech_embed_dim, self.num_antennas)
         
+        '''
+        TODO: change tranmisson from OMA to NOMA
+        '''
         
         self.textc_channel_to_decoder  =    nn.Linear(self.num_symbols_textc, decoder_embed_dim)
         self.imgc_channel_to_decoder  =     nn.Linear(self.num_symbols_imgc, decoder_embed_dim)
@@ -1833,8 +1760,6 @@ class UDeepSCUplinkNOMA(nn.Module):
         self.vqa_channel_to_decoder = nn.Linear(self.num_antennas, decoder_embed_dim)
 
         self.msa_channel_to_decoder = nn.Linear(self.num_antennas, decoder_embed_dim)
-
-        self.ave_channel_to_decoder = nn.Linear(self.num_antennas, decoder_embed_dim)
         
 
         self.task_dict = nn.ModuleDict()
@@ -1844,7 +1769,7 @@ class UDeepSCUplinkNOMA(nn.Module):
         self.task_dict['vqa'] = nn.Embedding(25, decoder_embed_dim)
         self.task_dict['msa']  = nn.Embedding(25, decoder_embed_dim)
         self.task_dict['textr'] = nn.Embedding(66, decoder_embed_dim)
-        self.task_dict['ave'] = nn.Embedding(25, decoder_embed_dim)
+
 
         self.head = nn.ModuleDict()
         self.head['imgc'] = nn.Linear(decoder_embed_dim, IMGC_NUMCLASS)
@@ -1853,7 +1778,7 @@ class UDeepSCUplinkNOMA(nn.Module):
         self.head['vqa'] = nn.Linear(decoder_embed_dim, VQA_NUMCLASS)
         self.head['imgr'] = nn.Linear(decoder_embed_dim, IMGR_LENGTH)
         self.head['msa'] = nn.Linear(decoder_embed_dim, MSA_NUMCLASS)
-        self.head['ave'] = nn.Linear(decoder_embed_dim, AVE_NUMCLASS)
+
 
         self.decoder = Decoder(depth=decoder_depth, embed_dim=decoder_embed_dim, 
                                 num_heads=decoder_num_heads, dff=mlp_ratio*decoder_embed_dim, 
@@ -1949,10 +1874,6 @@ class UDeepSCUplinkNOMA(nn.Module):
             # x_text = power_norm_batchwise(x_text, power)
             
         if img is not None:
-            AVE_batch_size = img.shape[0]
-            if ta_perform.startswith('ave'):
-                img = img.view(img.size(0) * img.size(1), -1, 512) # (batch_size * time_steps, 49, 512)
-
             x_img = self.img_encoder(img, ta_perform)
             if ta_perform.startswith('imgc'):
                 power = power_constraint[0]
@@ -1969,28 +1890,13 @@ class UDeepSCUplinkNOMA(nn.Module):
                 x_img = x_img[:,0,:].unsqueeze(1)
                 x_img = self.msa_img_encoder_to_channel(x_img)
 
-            elif ta_perform.startswith('ave'):
-                power = power_constraint[0]
-                x_img = x_img[:,0,:].unsqueeze(1)
-                x_img = self.ave_img_encoder_to_channel(x_img)
-
             # x_img = power_norm_batchwise(x_img, power)
             
         if speech is not None:
-            if ta_perform.startswith('ave'):
-                speech = speech.view(-1, speech.size(-1)) # (batch_size * time_steps, 128)
-
+            power = power_constraint[2]
             x_spe = self.spe_encoder(speech, ta_perform)
-            if ta_perform.startswith('msa'):
-                power = power_constraint[2]
-                x_spe = x_spe[:,0,:].unsqueeze(1)
-                x_spe = self.msa_spe_encoder_to_channel(x_spe)
-            
-            elif ta_perform.startswith('ave'):
-                power = power_constraint[1]
-                x_spe = x_spe[:,0,:].unsqueeze(1)
-                x_spe = self.ave_spe_encoder_to_channel(x_spe)
-            
+            x_spe = x_spe[:,0,:].unsqueeze(1)
+            x_spe = self.msa_spe_encoder_to_channel(x_spe)
             # x_spe = power_norm_batchwise(x_spe, power)
             
         if ta_perform.startswith('img'):
@@ -2007,12 +1913,6 @@ class UDeepSCUplinkNOMA(nn.Module):
             x = torch.stack((x_img, x_text, x_spe), dim=1)
             # x = torch.stack((x_img, torch.zeros_like(x_img)), dim=1)
             x = self.transmit(x, 1, noise_snr, power)
-
-        elif ta_perform.startswith('ave'):
-            power = 2
-            x = torch.stack((x_img, x_spe), dim=1)
-            x = self.transmit(x, 1, noise_snr, power)
-        
         
         if ta_perform.startswith('img'):
             x = x_img
@@ -2023,9 +1923,6 @@ class UDeepSCUplinkNOMA(nn.Module):
                   
         elif ta_perform.startswith('msa'):
             x = self.msa_channel_to_decoder(x)
-
-        elif ta_perform.startswith('ave'):
-            x = self.ave_channel_to_decoder(x)
 
         batch_size = x.shape[0]
         if ta_perform.endswith('r'):
@@ -2039,8 +1936,6 @@ class UDeepSCUplinkNOMA(nn.Module):
                 x = self.head[ta_perform](x)
             else:
                 x = self.head[ta_perform](x.mean(1))
-                if ta_perform.startswith('ave'):
-                    x = x.view(AVE_batch_size, -1, x.size(-1))
             if ta_perform.startswith('vqa'):
                 x = self.sigmoid_layer(x)
             return x

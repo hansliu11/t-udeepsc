@@ -10,13 +10,15 @@ class AVEDataset(Dataset):
         From https://github.com/YapengTian/AVE-ECCV18/blob/master/dataloader.py: AVEDataset
         Translate to pytorch dataset by me
     """
-    def __init__(self, config, split):
+    def __init__(self, config, split, add_infra:bool = False):
 
         assert split in ['train', 'val', 'test'], 'split must be "train"|"val"|"test"'
 
+        self.add_infra = add_infra
         self.data_path = str(config.data_dir)
-        self.video_dir = self.data_path + '/visual_feature.h5'
+        self.image_dir = self.data_path + '/visual_feature.h5'
         self.audio_dir = self.data_path + '/audio_feature.h5'
+        self.ir_image_dir = self.data_path + '/ir_visual_feature.h5'
         self.label_dir = self.data_path + '/labels.h5'
         self.order_dir = self.data_path + f'/{split}_order.h5'
 
@@ -29,8 +31,10 @@ class AVEDataset(Dataset):
             self.audio_features = hf['avadataset'][:]
         with h5py.File(self.label_dir, 'r') as hf:
             self.labels = hf['avadataset'][:]
-        with h5py.File(self.video_dir, 'r') as hf:
+        with h5py.File(self.image_dir, 'r') as hf:
             self.video_features = hf['avadataset'][:]
+        with h5py.File(self.ir_image_dir, 'r') as hf:
+            self.ir_img_features = hf['avadataset'][:]
 
     def __len__(self):
         return len(self.order)
@@ -39,11 +43,14 @@ class AVEDataset(Dataset):
         vid_idx = self.order[index]
         
         video = torch.tensor(self.video_features[vid_idx], dtype=torch.float32) # (time_steps, 7, 7, 512)
+        ir_image = torch.tensor(self.ir_img_features[vid_idx], dtype=torch.float32)
         audio = torch.tensor(self.audio_features[vid_idx], dtype=torch.float32) # (time_steps, 128)
         label = torch.tensor(self.labels[vid_idx], dtype=torch.float32) # (time_steps, num_class)
+        if self.add_infra:
+            return video, audio, label, ir_image
+        else:
+            return video, audio, label
         
-        return video, audio, label
-
     def get_batch(self, idx):
         """ Deprecated """
         for i in range(self.batch_size):
