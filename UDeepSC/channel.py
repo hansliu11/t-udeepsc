@@ -268,7 +268,7 @@ class AWGNSingleChannel(SingleChannel):
         snr_linear = 10 ** (SNRdb / 10.0)
         sigma2 = signal_power / snr_linear # calculate noise power based on signal power and SNR
         if ouput_power:
-            print ("RX Signal power: %.4f. Noise power: %.4f" % (signal_power, sigma2))     
+            print ("TX Signal power: %.4f. Noise power: %.4f" % (signal_power, sigma2))     
 
         noise_real = torch.randn_like(Tx_sig.real) * torch.sqrt(sigma2 / 2)
         noise_imag = torch.randn_like(Tx_sig.imag) * torch.sqrt(sigma2 / 2)

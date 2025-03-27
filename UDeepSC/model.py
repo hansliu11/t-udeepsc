@@ -572,6 +572,12 @@ class UDeepSC_M3(nn.Module):
                                 drop_path_rate=drop_path_rate,norm_layer=norm_layer, init_values=init_values,
                                 use_learnable_pos_emb=use_learnable_pos_emb)
         
+        self.img2_encoder = ViTEncoder(img_size=img_size, patch_size=patch_size, in_chans=encoder_in_chans, 
+                                num_classes=encoder_num_classes, embed_dim=img_embed_dim,depth=img_encoder_depth,
+                                num_heads=encoder_num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias,drop_rate=drop_rate, 
+                                drop_path_rate=drop_path_rate,norm_layer=norm_layer, init_values=init_values,
+                                use_learnable_pos_emb=use_learnable_pos_emb)
+        
         self.num_symbols_imgc = 16
         self.num_symbols_imgr = 16
         self.num_symbols_textc = 4
@@ -595,6 +601,7 @@ class UDeepSC_M3(nn.Module):
         self.msa_spe_encoder_to_channel =   nn.Linear(speech_embed_dim, self.num_symbols)
         self.ave_img_encoder_to_channel =   nn.Linear(img_embed_dim, self.num_symbols)
         self.ave_spe_encoder_to_channel =   nn.Linear(speech_embed_dim, self.num_symbols)
+        self.ave_img2_encoder_to_channel =   nn.Linear(img_embed_dim, self.num_symbols)
         
         # channel decoder
         self.textc_channel_decoder = ChannelDecoder(self.num_symbols, text_embed_dim)
@@ -606,6 +613,7 @@ class UDeepSC_M3(nn.Module):
         self.msa_spe_channel_decoder  = ChannelDecoder(self.num_symbols, speech_embed_dim)
         self.ave_img_channel_decoder  = ChannelDecoder(self.num_symbols, img_embed_dim)
         self.ave_spe_channel_decoder  = ChannelDecoder(self.num_symbols, speech_embed_dim)
+        self.ave_img2_channel_decoder  = ChannelDecoder(self.num_symbols, img_embed_dim)
 
         self.textc_channel_to_decoder  =    nn.Linear(text_embed_dim, decoder_embed_dim)
         self.imgc_channel_to_decoder  =     nn.Linear(img_embed_dim, decoder_embed_dim)
@@ -616,6 +624,7 @@ class UDeepSC_M3(nn.Module):
         self.msa_spe_channel_to_decoder  =  nn.Linear(speech_embed_dim, decoder_embed_dim)
         self.ave_img_channel_to_decoder  =  nn.Linear(img_embed_dim, decoder_embed_dim)
         self.ave_spe_channel_to_decoder = nn.Linear(speech_embed_dim, decoder_embed_dim)
+        self.ave_img2_channel_to_decoder  =  nn.Linear(img_embed_dim, decoder_embed_dim)
         
 
         self.task_dict = nn.ModuleDict()
@@ -747,7 +756,7 @@ class UDeepSC_M3(nn.Module):
         
         return transmitted, received
     
-    def forward(self, text=None, img=None, speech=None, ta_perform=None, power_constraint:list[float]=[1, 1, 1], test_snr:torch.FloatTensor=torch.FloatTensor([12]), channel_gain_var: float | None = None):
+    def forward(self, text=None, img=None, speech=None, img2=None, ta_perform=None, power_constraint:list[float]=[1, 1, 1], test_snr:torch.FloatTensor=torch.FloatTensor([12]), channel_gain_var: float | None = None):
         """
             Input:
                 text: text data (tokenized first) for task need text
@@ -838,6 +847,17 @@ class UDeepSC_M3(nn.Module):
             x_spe, _ = power_norm_batchwise(x_spe, power)
             x_spe = self.transmit(x_spe, noise_snr)
 
+        if img2 is not None:
+            if ta_perform.startswith('ave'):
+                img2 = img2.view(img2.size(0) * img2.size(1), -1, 512) # (batch_size * time_steps, 49, 512)
+                x_img2 = self.img2_encoder(img2, ta_perform)
+                
+                power = power_constraint[2]
+                x_img2 = x_img2[:,0,:].unsqueeze(1)
+                x_img2 = self.ave_img2_encoder_to_channel(x_img2)
+
+            x_img2, _ = power_norm_batchwise(x_img2, power)
+            x_img2 = self.transmit(x_img2, noise_snr)
         
         if ta_perform.startswith('img'):
             x_img = self.imgc_channel_decoder(x_img)
@@ -866,7 +886,7 @@ class UDeepSC_M3(nn.Module):
             x_spe = self.msa_spe_channel_to_decoder(x_spe)
             
             x = torch.cat([x_img,x_text,x_spe], dim=1)
-            # x = torch.cat([x_img], dim=1)
+            # x = torch.cat([x_img, x_spe], dim=1)
             # print(x.shape) # (batch_size, 3, 128)
         elif ta_perform.startswith('ave'):
             x_img = self.ave_img_channel_decoder(x_img)
@@ -874,8 +894,13 @@ class UDeepSC_M3(nn.Module):
 
             x_spe = self.ave_spe_channel_decoder(x_spe)
             x_spe = self.ave_spe_channel_to_decoder(x_spe)
+
+            if img2 is not None:
+                x_img2 = self.ave_img2_channel_decoder(x_img2)
+                x_img2 = self.ave_img2_channel_to_decoder(x_img2)
             
             x = torch.cat([x_img, x_spe], dim=1)
+            # x = torch.cat([x_img, x_spe, x_img2], dim=1)
             # print(x.shape) # (batch_size, 3, 128)
 
         batch_size = x.shape[0]
@@ -1115,7 +1140,7 @@ class UDeepSC_M3_withSIC(UDeepSC_M3):
         
         return transmitted, received
 
-    def forward(self, text=None, img=None, speech=None, ta_perform=None, power_constraint:list[float]=[1, 1, 1], test_snr:torch.FloatTensor=torch.FloatTensor([12]), channel_gain_var: list[list[float]] | torch.Tensor = None):
+    def forward(self, text=None, img=None, speech=None, img2=None, ta_perform=None, power_constraint:list[float]=[1, 1, 1], test_snr:torch.FloatTensor=torch.FloatTensor([12]), channel_gain_var: list[list[float]] | torch.Tensor = None):
         """
             Input:
                 text: text data (tokenized first) for task need text
@@ -1202,6 +1227,15 @@ class UDeepSC_M3_withSIC(UDeepSC_M3):
                 x_spe = x_spe[:,0,:].unsqueeze(1)
                 x_spe = self.ave_spe_encoder_to_channel(x_spe)
 
+        if img2 is not None:
+            if ta_perform.startswith('ave'):
+                img2 = img2.view(img2.size(0) * img2.size(1), -1, 512) # (batch_size * time_steps, 49, 512)
+                x_img2 = self.img2_encoder(img2, ta_perform)
+                
+                power = power_constraint[2]
+                x_img2 = x_img2[:,0,:].unsqueeze(1)
+                x_img2 = self.ave_img2_encoder_to_channel(x_img2)
+
         if ta_perform.startswith('img'):
             power_constraint = [1]
             x = x_img.unsqueeze(1)
@@ -1223,15 +1257,18 @@ class UDeepSC_M3_withSIC(UDeepSC_M3):
             x = torch.stack((x_img, x_text, x_spe), dim=1)
             channel_encoders = [self.msa_text_encoder_to_channel, self.msa_img_encoder_to_channel, self.msa_spe_encoder_to_channel]
             channel_decoders = [self.msa_text_channel_decoder, self.msa_img_channel_decoder, self.msa_spe_channel_decoder]
-            # x = torch.stack((x_img, torch.zeros_like(x_img)), dim=1)
-            # channel_encoders = [self.msa_img_encoder_to_channel]
-            # channel_decoders = [self.msa_img_channel_decoder]
+            # x = torch.stack((x_img, x_spe), dim=1)
+            # channel_encoders = [self.msa_img_encoder_to_channel, self.msa_spe_encoder_to_channel]
+            # channel_decoders = [self.msa_img_channel_decoder, self.msa_spe_channel_decoder]
             Rx_sigs = self.transmit(x, 1, noise_snr, power_constraint, channel_encoders, channel_decoders)
 
         elif ta_perform.startswith('ave'):
             x = torch.stack((x_img, x_spe), dim=1)
             channel_encoders = [self.ave_img_encoder_to_channel, self.ave_spe_encoder_to_channel]
             channel_decoders = [self.ave_img_channel_decoder, self.ave_spe_channel_decoder]
+            # x = torch.stack((x_img, x_spe, x_img2), dim=1)
+            # channel_encoders = [self.ave_img_encoder_to_channel, self.ave_spe_encoder_to_channel, self.ave_img2_encoder_to_channel]
+            # channel_decoders = [self.ave_img_channel_decoder, self.ave_spe_channel_decoder, self.ave_img2_channel_decoder]
             Rx_sigs = self.transmit(x, 1, noise_snr, power_constraint, channel_encoders, channel_decoders)
         
         if ta_perform.startswith('img'):
@@ -1248,15 +1285,15 @@ class UDeepSC_M3_withSIC(UDeepSC_M3):
 
             x = torch.cat([x_img,x_text], dim=1)
         elif ta_perform.startswith('msa'):
-            x_text = Rx_sigs[0]
-            x_text = self.msa_text_channel_to_decoder(x_text)
-            x_img = Rx_sigs[1]
+            # x_text = Rx_sigs[0]
+            # x_text = self.msa_text_channel_to_decoder(x_text)
+            x_img = Rx_sigs[0]
             x_img = self.msa_img_channel_to_decoder(x_img)
-            x_spe = Rx_sigs[2]
+            x_spe = Rx_sigs[1]
             x_spe = self.msa_spe_channel_to_decoder(x_spe)
             
-            # x = torch.cat([x_img], dim=1)
-            x = torch.cat([x_img, x_text, x_spe], dim=1)
+            x = torch.cat([x_img, x_spe], dim=1)
+            # x = torch.cat([x_img, x_text, x_spe], dim=1)
             # print(x.shape) # (batch_size, 3, 128)
 
         elif ta_perform.startswith('ave'):
@@ -1264,8 +1301,13 @@ class UDeepSC_M3_withSIC(UDeepSC_M3):
             x_img = self.ave_img_channel_to_decoder(x_img)
             x_spe = Rx_sigs[1]
             x_spe = self.ave_spe_channel_to_decoder(x_spe)
+
+            if img2 is not None:
+                x_img2 = Rx_sigs[2]
+                x_img2 = self.ave_img2_channel_to_decoder(x_img2)
             
             x = torch.cat([x_img, x_spe], dim=1)
+            # x = torch.cat([x_img, x_spe, x_img2], dim=1)
             # print(x.shape) # (batch_size, 3, 128)
 
         batch_size = x.shape[0]
@@ -1801,6 +1843,12 @@ class UDeepSCUplinkNOMA(nn.Module):
                                 drop_path_rate=drop_path_rate,norm_layer=norm_layer, init_values=init_values,
                                 use_learnable_pos_emb=use_learnable_pos_emb)
         
+        self.img2_encoder = ViTEncoder(img_size=img_size, patch_size=patch_size, in_chans=encoder_in_chans, 
+                                num_classes=encoder_num_classes, embed_dim=img_embed_dim,depth=img_encoder_depth,
+                                num_heads=encoder_num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias,drop_rate=drop_rate, 
+                                drop_path_rate=drop_path_rate,norm_layer=norm_layer, init_values=init_values,
+                                use_learnable_pos_emb=use_learnable_pos_emb)
+        
         self.num_symbols_imgc = 16
         self.num_symbols_imgr = 16
         self.num_symbols_textc = 4
@@ -1823,6 +1871,7 @@ class UDeepSCUplinkNOMA(nn.Module):
         self.msa_spe_encoder_to_channel =   nn.Linear(speech_embed_dim, self.num_antennas)
         self.ave_img_encoder_to_channel =   nn.Linear(img_embed_dim, self.num_antennas)
         self.ave_spe_encoder_to_channel =   nn.Linear(speech_embed_dim, self.num_antennas)
+        self.ave_img2_encoder_to_channel =   nn.Linear(img_embed_dim, self.num_antennas)
         
         
         self.textc_channel_to_decoder  =    nn.Linear(self.num_symbols_textc, decoder_embed_dim)
@@ -1906,7 +1955,7 @@ class UDeepSCUplinkNOMA(nn.Module):
     def no_weight_decay(self):
         return {'pos_embed', 'cls_token', 'mask_token'}
 
-    def forward(self, text=None, img=None, speech=None, ta_perform=None, power_constraint:list[float]=[1, 1, 1], test_snr:torch.FloatTensor=torch.FloatTensor([12]), channel_gain_var: list[list[float]] | torch.Tensor = None):
+    def forward(self, text=None, img=None, speech=None, img2=None, ta_perform=None, power_constraint:list[float]=[1, 1, 1], test_snr:torch.FloatTensor=torch.FloatTensor([12]), channel_gain_var: list[list[float]] | torch.Tensor = None):
         """
             Input:
                 text: text data (tokenized first) for task need text
@@ -1992,6 +2041,15 @@ class UDeepSCUplinkNOMA(nn.Module):
                 x_spe = self.ave_spe_encoder_to_channel(x_spe)
             
             # x_spe = power_norm_batchwise(x_spe, power)
+        
+        if img2 is not None:
+            if ta_perform.startswith('ave'):
+                img2 = img2.view(img2.size(0) * img2.size(1), -1, 512) # (batch_size * time_steps, 49, 512)
+                x_img2 = self.img2_encoder(img2, ta_perform)
+                
+                power = power_constraint[2]
+                x_img2 = x_img2[:,0,:].unsqueeze(1)
+                x_img2 = self.ave_img2_encoder_to_channel(x_img2)
             
         if ta_perform.startswith('img'):
             x_img = x_img.unsqueeze(1)
@@ -2003,14 +2061,15 @@ class UDeepSCUplinkNOMA(nn.Module):
             x = torch.stack((x_img, x_text), dim=1)
             x = self.transmit(x, 1, noise_snr, 2)
         elif ta_perform.startswith('msa'):
-            power = 3
+            power = 2
             x = torch.stack((x_img, x_text, x_spe), dim=1)
-            # x = torch.stack((x_img, torch.zeros_like(x_img)), dim=1)
+            # x = torch.stack((x_img, x_spe), dim=1)
             x = self.transmit(x, 1, noise_snr, power)
 
         elif ta_perform.startswith('ave'):
-            power = 2
+            power = 1
             x = torch.stack((x_img, x_spe), dim=1)
+            # x = torch.stack((x_img, x_spe, x_img2), dim=1)
             x = self.transmit(x, 1, noise_snr, power)
         
         

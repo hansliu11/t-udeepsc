@@ -175,6 +175,7 @@ def evaluate_ave(ta_perform: str, net: torch.nn.Module, dataloader: Iterable,
     with torch.no_grad():
         for batch_idx, (imgs, speechs, targets) in enumerate(dataloader):
             imgs, speechs, targets = imgs.to(device), speechs.to(device), targets.to(device)
+            # imgs2 = imgs2.to(device)
             outputs = net(img=imgs, speech=speechs, ta_perform=ta_perform, power_constraint=power_constraint)
             loss = criterion(outputs, targets)
             y_pred.append(outputs.detach().cpu().numpy())
@@ -418,6 +419,7 @@ def train_epoch_uni(model: torch.nn.Module, criterion: dict,
                 if wd_schedule_values is not None and param_group["weight_decay"] > 0:
                     param_group["weight_decay"] = wd_schedule_values[it]
         imgs, texts, speechs, targets = None, None, None, None
+        # img2s = None
         ta_index = np.random.randint(num_tasks)
         ta = ta_sel[ta_index]
         data = data_batch[ta_index]
@@ -441,6 +443,7 @@ def train_epoch_uni(model: torch.nn.Module, criterion: dict,
             imgs = data[0].to(device, non_blocking=True)
             speechs = data[1].to(device, non_blocking=True)
             targets = data[2].to(device, non_blocking=True)
+            # img2s = data[3].to(device, non_blocking=True)
         else:
             raise NotImplementedError()
         batch_size = targets.shape[0]
