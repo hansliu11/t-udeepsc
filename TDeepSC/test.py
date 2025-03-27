@@ -56,10 +56,10 @@ def get_test_samples(args, batch_size=5):
     # print(str_type(inputs))
     return inputs, targets
 
-def get_test_dataloader(args, batch_size=5):
+def get_test_dataloader(args, batch_size=5, infra=False):
     """Return testset and test dataloader"""
     split = 'test' if args.ta_perform == 'ave' else 'val'
-    testset = build_dataset(is_train=False, args=args, split=split)
+    testset = build_dataset(is_train=False, args=args, split=split, infra=infra)
 
     sampler_test = torch.utils.data.SequentialSampler(testset)
     Collate_fn = collate_fn if args.ta_perform.startswith('msa') else None 
@@ -131,7 +131,8 @@ def test_SNR(ta_perform:str, SNRrange:list[int], model_path, args,device, datalo
         y_true, y_pred = [], []
         for (imgs, texts, speechs, targets) in tqdm(dataloader):
             imgs, texts, speechs, targets = imgs.to(device), texts.to(device), speechs.to(device), targets.to(device)
-            outputs = model(img=imgs, text=texts, speech=speechs, ta_perform=ta_perform)
+            # outputs = model(img=imgs, text=texts, speech=speechs, ta_perform=ta_perform)
+            outputs = model(text=texts, speech=speechs, ta_perform=ta_perform)
             y_pred.append(outputs.detach().cpu().numpy())
             y_true.append(targets.detach().cpu().numpy())
     
@@ -145,9 +146,11 @@ def test_SNR(ta_perform:str, SNRrange:list[int], model_path, args,device, datalo
         nb_batch = len(dataloader)
             
         y_true, y_pred = [], []
-        for (imgs, speechs, targets) in tqdm(dataloader):
+        for (imgs, speechs, targets, img2s) in tqdm(dataloader):
             imgs, speechs, targets = imgs.to(device), speechs.to(device), targets.to(device)
-            outputs = model(img=imgs, speech=speechs, ta_perform=ta_perform)
+            img2s = img2s.to(device)
+            # outputs = model(img=imgs, speech=speechs,   ta_perform=ta_perform)
+            outputs = model(img=imgs, speech=speechs, img2=img2s,  ta_perform=ta_perform)
             y_pred.append(outputs.detach().cpu().numpy())
             y_true.append(targets.detach().cpu().numpy())
     
@@ -159,13 +162,11 @@ def test_SNR(ta_perform:str, SNRrange:list[int], model_path, args,device, datalo
     
 def main_test_SNR_single():
     opts = get_args()
-    ta_perform = 'ave'
+    ta_perform = 'msa'
     device = 'cuda:0'
     device = torch.device(device)
-    power_constraint_static = [1.0, 1.0, 1.0]
-    power_constraint = [0.5, 1, 1.5]
-    # power_constraint = [0.5, 1.5]
-    result_output = ta_perform + "_result"
+
+    result_output = ta_perform + "_result_TextSpe"
     root = './output'
     models_dir = Path(root)
     
@@ -188,7 +189,7 @@ def main_test_SNR_single():
     opts.ta_perform = ta_perform
     opts.batch_size = 64
     
-    testset, dataloader = get_test_dataloader(opts)
+    testset, dataloader = get_test_dataloader(opts, infra=False)
     SNRrange = [-6, 12]
     
     metric1 = test_SNR(ta_perform, SNRrange, best_model_path, opts, device, dataloader)
@@ -198,7 +199,9 @@ def main_test_SNR_single():
     x = [i for i in range(SNRrange[0], SNRrange[1] + 1)]
     models = [metric1] * len(x)
     test_setting = {
-        "Title": "AVE task test",
+        "Title": "MSA only 2 modal (text, speech)",
+        # "Title": "MSA Test",
+        "samples": len(testset),
         "Model": str(best_model_path),
         "Result": models
     }

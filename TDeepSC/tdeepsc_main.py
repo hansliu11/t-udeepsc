@@ -43,7 +43,7 @@ def main(args):
     seed_initial(seed=args.seed)
 
     ### wanb init
-    wandb.init(project="tdeepsc", name="ave_test")
+    wandb.init(project="tdeepsc", name="msa_test")
     wandbConfig_initial(args)
     ####################################### Get the model
     model = get_model(args)
@@ -75,7 +75,7 @@ def main(args):
         
     
     
-    trainset = build_dataset(is_train=True, args=args)
+    trainset = build_dataset(is_train=True, args=args, infra=True)
 
     Collate_fn = collate_fn if args.ta_perform.startswith('msa') else None 
     trainloader = torch.utils.data.DataLoader(dataset=trainset,
@@ -86,7 +86,7 @@ def main(args):
     ############################################## Get the test dataloader
     valset = None
     if args.ta_perform:
-        valset = build_dataset(is_train=False, args=args)
+        valset = build_dataset(is_train=False, args=args, infra=True)
         sampler_val = torch.utils.data.SequentialSampler(valset)
     else:
         valset = None

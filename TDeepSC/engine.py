@@ -468,10 +468,12 @@ def evaluate_ave(ta_perform: str, net: torch.nn.Module, dataloader: Iterable,
     loss_meter = AverageMeter()
     y_true, y_pred = [], []
     with torch.no_grad():
-        for batch_idx, (imgs, speechs, targets) in enumerate(dataloader):
+        for batch_idx, (imgs, speechs, targets, img2s) in enumerate(dataloader):
             # print(f'{targets.shape= }')
             imgs, speechs, targets = imgs.to(device), speechs.to(device), targets.to(device)
-            outputs = net(img=imgs, speech=speechs, ta_perform=ta_perform)
+            img2s = img2s.to(device)
+            # outputs = net(img=imgs, speech=speechs, ta_perform=ta_perform)
+            outputs = net(img=imgs, speech=speechs, img2=img2s, ta_perform=ta_perform)
             loss = criterion(outputs, targets)
             y_pred.append(outputs.detach().cpu().numpy())
             y_true.append(targets.detach().cpu().numpy())
@@ -485,8 +487,8 @@ def evaluate_ave(ta_perform: str, net: torch.nn.Module, dataloader: Iterable,
     return test_stat
     
 
-def train_class_batch_ave(ta_perform, model, imgs, speechs, targets, criterion):
-    outputs = model(img=imgs, speech=speechs, ta_perform=ta_perform)
+def train_class_batch_ave(ta_perform, model, imgs, speechs, targets, img2s, criterion):
+    outputs = model(img=imgs, speech=speechs, img2=img2s, ta_perform=ta_perform)
     loss = criterion(outputs, targets)
 
     return loss, outputs
@@ -507,7 +509,7 @@ def train_epoch_ave(model: torch.nn.Module, criterion: torch.nn.Module,
     
     n_batch = len(data_loader)
     progress_bar = tqdm(enumerate(data_loader), leave=False, desc='Train', total=n_batch, dynamic_ncols=True)
-    for data_iter_step, (imgs, speechs, targets) in progress_bar:    
+    for data_iter_step, (imgs, speechs, targets, img2s) in progress_bar:    
         step = data_iter_step // update_freq
         it = start_steps + step  
         if lr_schedule_values is not None or wd_schedule_values is not None and data_iter_step % update_freq == 0:
@@ -520,11 +522,12 @@ def train_epoch_ave(model: torch.nn.Module, criterion: torch.nn.Module,
         imgs = imgs.to(device, non_blocking=True)
         speechs = speechs.to(device, non_blocking=True)
         targets = targets.to(device, non_blocking=True)
+        img2s = img2s.to(device, non_blocking=True)
         batch_size = imgs.size(0)        
                            
         with torch.amp.autocast('cuda'):
             loss, outputs = train_class_batch_ave(
-                ta_perform, model, imgs, speechs, targets, criterion)
+                ta_perform, model, imgs, speechs, targets, img2s, criterion)
         loss_value = loss.item()
 
         ######  Error                              

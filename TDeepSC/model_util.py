@@ -347,10 +347,34 @@ class CNN_embedd(nn.Module):
         if isinstance(m, nn.Conv2d):
             nn.init.kaiming_normal_(m.weight)
 
+class ChannelDecoder(nn.Module):
+    def __init__(self, 
+                 num_symbols: int,
+                 output_dim: int, 
+                 ):
+        super(ChannelDecoder, self).__init__()
+        
+        self.num_symbols = num_symbols
+        self.output_dim = output_dim
 
+        self.linear1 = nn.Linear(num_symbols, output_dim)
+        self.linear2 = nn.Linear(output_dim, 256)
+        self.linear3 = nn.Linear(256, output_dim)
+        # self.linear4 = nn.Linear(size1, d_model)
+        
+        self.LN = nn.LayerNorm(output_dim, eps=1e-6)
+        
+    def forward(self, x):
+        x1 = self.linear1(x)
+        x2 = F.relu(x1)
+        x3 = self.linear2(x2)
+        x4 = F.relu(x3)
+        x5 = self.linear3(x4)
+        
+        # output = self.layernorm(x1 + x5)
+        output = self.LN(x5)
 
-
-
+        return output
 
 class ViTEncoder_imgcr(nn.Module):
     """ Vision Transformer with support for patch or hybrid CNN input stage

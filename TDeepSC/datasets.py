@@ -60,7 +60,7 @@ class BatchSchedulerSampler(torch.utils.data.sampler.Sampler):
         self.epoch = epoch
 
 
-def build_dataset(is_train, args, split: Literal['val', 'test'] = 'val'):
+def build_dataset(is_train, args, split: Literal['val', 'test'] = 'val', infra: bool = False):
     if args.ta_perform.startswith('img'):
         transform = build_img_transform(is_train, args)
         print("Transform = ")
@@ -98,7 +98,7 @@ def build_dataset(is_train, args, split: Literal['val', 'test'] = 'val'):
     elif args.ta_perform.startswith('ave'):
         split = 'train' if is_train else split
         config_ave = Config_AVE()
-        dataset = AVEDataset(config_ave, split=split)
+        dataset = AVEDataset(config_ave, split=split, add_infra=infra)
     
     else:
         raise NotImplementedError()

@@ -401,11 +401,13 @@ class TDeepSC_msa(nn.Module):
         self.text_encoder_to_channel = nn.Linear(encoder_dim_text, self.num_symbols_text)
         self.spe_encoder_to_channel = nn.Linear(128, self.num_symbols_spe)
 
-        self.channel = Channels()
 
-        self.img_channel_to_decoder = nn.Linear(self.num_symbols_img, decoder_embed_dim)
-        self.text_channel_to_decoder = nn.Linear(self.num_symbols_text, decoder_embed_dim)
-        self.spe_channel_to_decoder = nn.Linear(self.num_symbols_spe, decoder_embed_dim)
+        self.img_channel_decoder = ChannelDecoder(self.num_symbols_img, encoder_embed_dim)
+        self.text_channel_decoder = ChannelDecoder(self.num_symbols_text, encoder_dim_text)
+        self.spe_channel_decoder = ChannelDecoder(self.num_symbols_spe, 128)
+        self.img_channel_to_decoder = nn.Linear(encoder_embed_dim, decoder_embed_dim)
+        self.text_channel_to_decoder = nn.Linear(encoder_dim_text, decoder_embed_dim)
+        self.spe_channel_to_decoder = nn.Linear(128, decoder_embed_dim)
 
 
         self.decoder = Decoder(depth=decoder_depth,embed_dim=decoder_embed_dim, 
@@ -430,7 +432,7 @@ class TDeepSC_msa(nn.Module):
         return {'pos_embed', 'cls_token', 'mask_token'}
 
     def forward(self, text=None, img=None, speech=None, ta_perform=None, test_snr=torch.FloatTensor([-2])):
-        x_text = self.text_encoder(input_ids=text, return_dict=False)[0]
+        # x_text = self.text_encoder(input_ids=text, return_dict=False)[0]
         x_img = self.img_encoder(img, ta_perform)
         x_spe = self.spe_encoder(speech, ta_perform)
 
@@ -444,22 +446,21 @@ class TDeepSC_msa(nn.Module):
 
 
         x_img = self.img_encoder_to_channel(x_img)
-        x_text = self.text_encoder_to_channel(x_text)
+        # x_text = self.text_encoder_to_channel(x_text)
         x_spe = self.spe_encoder_to_channel(x_spe)
 
-        # x_img = power_norm_batchwise(x_img[:,0].unsqueeze(1))
-        # x_text = power_norm_batchwise(x_text[:,0].unsqueeze(1))
-        # x_spe = power_norm_batchwise(x_spe[:,0].unsqueeze(1))
-
-        # x_img = self.channel.Rayleigh(x_img, noise_std.item())
-        # x_text = self.channel.Rayleigh(x_text, noise_std.item())
-        # x_spe = self.channel.Rayleigh(x_spe, noise_std.item())
-
+        x_img = self.img_channel_decoder(x_img)
         x_img = self.img_channel_to_decoder(x_img)
-        x_text = self.text_channel_to_decoder(x_text)
+
+        # x_text = self.text_channel_decoder(x_text)
+        # x_text = self.text_channel_to_decoder(x_text)
+        
+        x_spe = self.spe_channel_decoder(x_spe)
         x_spe = self.spe_channel_to_decoder(x_spe)
 
-        x = torch.cat([x_text,x_img,x_spe], dim=1)
+        x = torch.cat([x_img,x_spe], dim=1)
+        # x = torch.cat([x_text,x_img,x_spe], dim=1)
+
         query_embed = self.query_embedd.weight.unsqueeze(0).repeat(batch_size, 1, 1)
         x = self.decoder(query_embed, x, None, None, None) 
         x = self.head(x.mean(1))
@@ -484,15 +485,23 @@ class TDeepSC_ave(nn.Module):
                                 depth=encoder_depth,num_heads=encoder_num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias,drop_rate=drop_rate, 
                                 drop_path_rate=drop_path_rate,norm_layer=norm_layer, init_values=init_values,
                                 use_learnable_pos_emb=use_learnable_pos_emb)
+        
+        self.img2_encoder = ViTEncoder_ave(img_size=img_size, patch_size=patch_size, in_chans=encoder_in_chans, 
+                                num_classes=encoder_num_classes, embed_dim=encoder_embed_dim,depth=encoder_depth,
+                                num_heads=encoder_num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias,drop_rate=drop_rate, 
+                                drop_path_rate=drop_path_rate,norm_layer=norm_layer, init_values=init_values,
+                                use_learnable_pos_emb=use_learnable_pos_emb)
 
         self.num_symbols_img = 16
         self.num_symbols_spe = 16
         
         self.img_encoder_to_channel = nn.Linear(encoder_embed_dim, self.num_symbols_img)
         self.spe_encoder_to_channel = nn.Linear(128, self.num_symbols_spe)
+        self.img2_encoder_to_channel = nn.Linear(encoder_embed_dim, self.num_symbols_img)
 
         self.img_channel_to_decoder = nn.Linear(self.num_symbols_img, decoder_embed_dim)
         self.spe_channel_to_decoder = nn.Linear(self.num_symbols_spe, decoder_embed_dim)
+        self.img2_channel_to_decoder = nn.Linear(self.num_symbols_img, decoder_embed_dim)
 
 
         self.decoder = Decoder(depth=decoder_depth,embed_dim=decoder_embed_dim, 
@@ -516,7 +525,7 @@ class TDeepSC_ave(nn.Module):
     def no_weight_decay(self):
         return {'pos_embed', 'cls_token', 'mask_token'}
 
-    def forward(self, text=None, img=None, speech=None, ta_perform=None, test_snr=torch.FloatTensor([-2])):
+    def forward(self, text=None, img=None, speech=None, img2=None, ta_perform=None, test_snr=torch.FloatTensor([-2])):
         batch_size = img.shape[0]
         
         img = img.view(img.size(0) * img.size(1), -1, 512) # (batch_size * time_steps, 49, 512)
@@ -531,7 +540,14 @@ class TDeepSC_ave(nn.Module):
         x_img = self.img_channel_to_decoder(x_img)
         x_spe = self.spe_channel_to_decoder(x_spe)
 
-        x = torch.cat([x_img,x_spe], dim=1)
+        if img2 is not None:
+            img2 = img2.view(img2.size(0) * img2.size(1), -1, 512) # (batch_size * time_steps, 49, 512)
+            x_img2 = self.img2_encoder(img2, ta_perform)
+            x_img2 = self.img2_encoder_to_channel(x_img2)
+            x_img2 = self.img2_channel_to_decoder(x_img2)
+
+        # x = torch.cat([x_img,x_spe], dim=1)
+        x = torch.cat([x_img, x_spe, x_img2], dim=1)
         query_embed = self.query_embedd.weight.unsqueeze(0).repeat(x.shape[0], 1, 1)
         x = self.decoder(query_embed, x, None, None, None) 
         x = self.head(x.mean(1))
