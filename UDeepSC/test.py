@@ -74,10 +74,10 @@ def get_test_samples(args, batch_size=5):
     print(str_type(sel_batch))
     return sel_batch, targets
 
-def get_test_dataloader(args, batch_size=5, shuffle=False):
+def get_test_dataloader(args, shuffle=False, infra=False):
     """Return testset and test dataloader"""
     split = 'test' if args.ta_perform == 'ave' else 'val'
-    testset = build_dataset_test(is_train=False, args=args, split=split)
+    testset = build_dataset_test(is_train=False, args=args, split=split, infra=infra)
     
     if args.textr_euro:
         indices = list(range(args.batch_size * 1000))
@@ -304,7 +304,7 @@ def test_SNR(ta_perform:str, SNRrange:list[int], power_constraint, model_path, a
             for (imgs, texts, speechs, targets) in tqdm(dataloader):
                 imgs, texts, speechs, targets = imgs.to(device), texts.to(device), speechs.to(device), targets.to(device)
                 outputs = model(img=imgs, text=texts, speech=speechs, ta_perform=ta_perform, power_constraint=power_constraint, test_snr=snr)
-                # outputs = model(img=imgs, ta_perform=ta_perform, power_constraint=power_constraint, test_snr=snr)
+                # outputs = model(img=imgs, speech=speechs, ta_perform=ta_perform, power_constraint=power_constraint, test_snr=snr)
                 y_pred.append(outputs.detach().cpu().numpy())
                 y_true.append(targets.detach().cpu().numpy())
         
@@ -325,7 +325,9 @@ def test_SNR(ta_perform:str, SNRrange:list[int], power_constraint, model_path, a
             y_true, y_pred = [], []
             for (imgs, speechs, targets) in tqdm(dataloader):
                 imgs, speechs, targets = imgs.to(device), speechs.to(device), targets.to(device)
+                # img2s = img2s.to(device) 
                 outputs = model(img=imgs, speech=speechs, ta_perform=ta_perform, power_constraint=power_constraint, test_snr=snr)
+                # outputs = model(img=imgs, speech=speechs, img2=img2s, ta_perform=ta_perform, power_constraint=power_constraint, test_snr=snr)
                 y_pred.append(outputs.detach().cpu().numpy())
                 y_true.append(targets.detach().cpu().numpy())
         
@@ -431,12 +433,13 @@ def main_test_SNR():
     device = torch.device(device)
     power_constraint_static = [1.0, 1.0, 1.0]
     power_constraint = [0.5, 1, 1.5]
+    # power_constraint = [1.6, 0.9, 0.4]
     # power_constraint = [0.5, 1.5]
-    result_output = ta_perform + "_result_shift"
+    result_output = ta_perform + "_result"
     
     chart_args = {
         'channel_type' : "AWGN channel",
-        'output': "acc_" + ta_perform + "_result_shift",
+        'output': "acc_" + ta_perform + "_result",
         'y_axis': "Accuracy (%)",
         "y_lim" : [55, 82, 5],
         # "y_lim" : [20, 62, 10],
@@ -447,30 +450,10 @@ def main_test_SNR():
     root = './output'
     models_dir = Path(root)
     
-    if ta_perform.startswith('imgc'):
-        task_fold = 'imgc'
-    elif ta_perform.startswith('imgr'):
-        task_fold = 'imgr'
-    elif ta_perform.startswith('textc'):
-        task_fold = 'textc'
-    elif ta_perform.startswith('textr'):
-        task_fold = 'ckpt_textr'
-        task_fold = 'textr_smooth_01'
-    elif ta_perform.startswith('vqa'):
-        folder = models_dir / f'udeepsc_{ta_perform}'
-        folderSIC = models_dir / f'noSIC_{ta_perform}'
-        folder_noSIC = models_dir / f'NOMA_{ta_perform}'
-        folder_pfSIC = models_dir / f'perfectSIC_{ta_perform}'
-    elif ta_perform.startswith('msa'):
-        folder = models_dir / f'udeepsc_{ta_perform}'
-        folderSIC = models_dir / f'noSIC_{ta_perform}'
-        folder_noSIC = models_dir / f'NOMA_{ta_perform}'
-        folder_pfSIC = models_dir / f'perfectSIC_{ta_perform}'
-    elif ta_perform.startswith('ave'):
-        folder = models_dir / f'udeepsc_{ta_perform}'
-        folderSIC = models_dir / f'noSIC_{ta_perform}'
-        folder_noSIC = models_dir / f'NOMA_{ta_perform}'
-        folder_pfSIC = models_dir / f'perfectSIC_{ta_perform}'
+    folder = models_dir / f'udeepsc_{ta_perform}'
+    folderSIC = models_dir / f'NOMA_{ta_perform}'
+    folder_noSIC = models_dir / f'noSIC_{ta_perform}'
+    folder_pfSIC = models_dir / f'perfectSIC_{ta_perform}'
     
     # udeepsc
     best_model_path1 = get_best_checkpoint(folder, "udeepscM3")
@@ -488,13 +471,13 @@ def main_test_SNR():
     best_model_path4 = get_best_checkpoint(folder_pfSIC, "udeepscM3")
     print(f'{best_model_path4 = }')
     
-    opts.model = 'UDeepSC_SepCD_model'
     opts.ta_perform = ta_perform
     opts.batch_size = 32
     
-    testset, dataloader = get_test_dataloader(opts, shuffle=False)
+    testset, dataloader = get_test_dataloader(opts, shuffle=False, infra=False)
     SNRrange = [-6, 12]
     
+    opts.model = 'UDeepSC_SepCD_model'
     metric1 = test_SNR(ta_perform, SNRrange, power_constraint_static, best_model_path1, opts, device, dataloader)
     metric4 = test_SNR(ta_perform, SNRrange, power_constraint, best_model_path4, opts, device, dataloader)
 
@@ -503,18 +486,21 @@ def main_test_SNR():
     metric2 = test_SNR(ta_perform, SNRrange, power_constraint, best_model_path2, opts, device, dataloader)
     
     
-    power_constraint = [3, 3, 3]
+    # power_constraint = [3, 3, 3]
     opts.model = 'UDeepSC_NOMANoSIC_model'
     metric3 = test_SNR(ta_perform, SNRrange, power_constraint, best_model_path3, opts, device, dataloader)
     
     # print(snr12_bleus)
     
     x = [i for i in range(SNRrange[0], SNRrange[1] + 1)]
-    upper_bound = [chart_args[f'{ta_perform}_upper']] * len(x)
+    # upper_bound = [chart_args[f'{ta_perform}_upper']] * len(x)
     models = [metric1, metric4, metric2, metric3]
-    # models = [metric1, metric3]
     
     test_set = {
+        "Title": "MSA test",
+        # 'Title': "Ave test",
+        "Test Samples": len(testset),
+        "power": power_constraint, 
         'udeepsc': str(best_model_path1),
         'perfect SIC': str(best_model_path4),
         'udeepsc NOMA': str(best_model_path2),
@@ -524,57 +510,45 @@ def main_test_SNR():
     save_result_JSON(test_set, result_output)
     
     labels = ["U-DeepSC", "U-DeepSC with perfect SIC", "U-DeepSC NOMA (with SIC)", "U-DeepSC NOMA (w/o SIC)"]
-    draw_line_chart(x, models, y_lim= chart_args['y_lim'], labels=labels, title=chart_args['channel_type'], xlabel="SNR/dB", ylabel=chart_args['y_axis'], output=chart_args['output'])
+    draw_line_chart(x, models, 
+                    y_lim= chart_args['y_lim'],
+                    labels=labels, 
+                    title=chart_args['channel_type'], 
+                    xlabel="SNR/dB", 
+                    ylabel=chart_args['y_axis'], 
+                    output=chart_args['output']
+                    )
 
 def main_test_SNR_single():
     opts = get_args()
-    ta_perform = 'ave'
+    ta_perform = 'msa'
     device = 'cuda:1'
     device = torch.device(device)
     power_constraint_static = [1.0, 1.0, 1.0]
+    # power_constraint = [0.5, 1, 1.5]
     power_constraint = [0.5, 1.5]
     # power_constraint = [0.5]
-    result_output = ta_perform + "_result_test"
+    result_output = ta_perform + "_result_single"
     root = './output'
     models_dir = Path(root)
 
     print(f"Power Constraint: {power_constraint}")
     
-    if ta_perform.startswith('imgc'):
-        task_fold = 'imgc'
-    elif ta_perform.startswith('imgr'):
-        task_fold = 'imgr'
-    elif ta_perform.startswith('textc'):
-        task_fold = 'textc'
-    elif ta_perform.startswith('textr'):
-        task_fold = 'ckpt_textr'
-        task_fold = 'textr_smooth_01'
-    elif ta_perform.startswith('vqa'):
-        folder = models_dir / f'udeepsc_{ta_perform}'
-        folderSIC = models_dir / f'noSIC_{ta_perform}'
-        folder_noSIC = models_dir / f'NOMA_{ta_perform}'
-        folder_pfSIC = models_dir / f'perfectSIC_{ta_perform}'
-    elif ta_perform.startswith('msa'):
-        folder = models_dir / f'udeepsc_{ta_perform}'
-        folderSIC = models_dir / f'noSIC_{ta_perform}'
-        folder_noSIC = models_dir / f'NOMA_{ta_perform}'
-        folder_pfSIC = models_dir / f'perfectSIC_{ta_perform}'
-    elif ta_perform.startswith('ave'):
-        folder = models_dir / f'udeepsc_{ta_perform}'
-        folderSIC = models_dir / f'noSIC_{ta_perform}'
-        folder_noSIC = models_dir / f'NOMA_{ta_perform}'
-        folder_pfSIC = models_dir / f'perfectSIC_{ta_perform}'
+    folder = models_dir / f'udeepsc_{ta_perform}'
+    folderSIC = models_dir / f'NOMA_{ta_perform}'
+    folder_noSIC = models_dir / f'noSIC_{ta_perform}'
+    folder_pfSIC = models_dir / f'perfectSIC_{ta_perform}'
     
     # udeepsc
-    best_model_path = get_best_checkpoint(folder, "udeepscM3")
+    best_model_path = get_best_checkpoint(folder_noSIC, "powerSum")
     print(f'{best_model_path = }')
     
     
-    opts.model = 'UDeepSC_SepCD_model'
+    opts.model = 'UDeepSC_NOMANoSIC_model'
     opts.ta_perform = ta_perform
     opts.batch_size = 16
     
-    testset, dataloader = get_test_dataloader(opts)
+    testset, dataloader = get_test_dataloader(opts, infra=False)
     SNRrange = [-6, 12]
     
     metric1 = test_SNR(ta_perform, SNRrange, power_constraint, best_model_path, opts, device, dataloader)
@@ -582,7 +556,9 @@ def main_test_SNR_single():
     
     models = [metric1]
     test_setting = {
-        "Title": "AVE task test",
+        "Title": "Msa test image & speech",
+        "Test Samples": len(testset),
+        "power": power_constraint, 
         "Model": str(best_model_path),
         "Result": models
     }
@@ -591,18 +567,18 @@ def main_test_SNR_single():
     
 def main_test_Modal_SNR():
     opts = get_args()
-    ta_perform = 'msa'
+    ta_perform = 'ave'
     device = 'cuda:1'
     device = torch.device(device)
     power_constraint_static = [1.0, 1.0, 1.0]
-    # power_constraint = [0.5, 1, 1.5]
-    # power_constraint = [1.5, 0.5]
-    power_constraint = [1]
-    result_output = ta_perform + "_result" + "_Img"
+    power_constraint = [1.5, 0.5]
+    # power_constraint = [1.6, 0.4]
+    # power_constraint = [1]
+    result_output = ta_perform + "_result" + "_Homo"
     
     chart_args = {
         'channel_type' : "AWGN channel",
-        'output': "acc_" + ta_perform + "_Img",
+        'output': "acc_" + ta_perform + "_Homo",
         'y_axis': "Accuracy (%)",
         "y_lim" : [55, 82, 5],
         # "y_lim" : [20, 62, 10],
@@ -613,52 +589,32 @@ def main_test_Modal_SNR():
     root = './output'
     models_dir = Path(root)
     
-    if ta_perform.startswith('imgc'):
-        task_fold = 'imgc'
-    elif ta_perform.startswith('imgr'):
-        task_fold = 'imgr'
-    elif ta_perform.startswith('textc'):
-        task_fold = 'textc'
-    elif ta_perform.startswith('textr'):
-        task_fold = 'ckpt_textr'
-        task_fold = 'textr_smooth_01'
-    elif ta_perform.startswith('vqa'):
-        folder = models_dir / f'udeepsc_{ta_perform}'
-        folderSIC = models_dir / f'noSIC_{ta_perform}'
-        folder_noSIC = models_dir / f'NOMA_{ta_perform}'
-        folder_pfSIC = models_dir / f'perfectSIC_{ta_perform}'
-    elif ta_perform.startswith('msa'):
-        folder = models_dir / f'udeepsc_{ta_perform}'
-        folderSIC = models_dir / f'noSIC_{ta_perform}'
-        folder_noSIC = models_dir / f'NOMA_{ta_perform}'
-        folder_pfSIC = models_dir / f'perfectSIC_{ta_perform}'
-    elif ta_perform.startswith('ave'):
-        folder = models_dir / f'udeepsc_{ta_perform}'
-        folderSIC = models_dir / f'noSIC_{ta_perform}'
-        folder_noSIC = models_dir / f'NOMA_{ta_perform}'
-        folder_pfSIC = models_dir / f'perfectSIC_{ta_perform}'
+    folder = models_dir / f'udeepsc_{ta_perform}'
+    folderSIC = models_dir / f'NOMA_{ta_perform}'
+    folder_noSIC = models_dir / f'noSIC_{ta_perform}'
+    folder_pfSIC = models_dir / f'perfectSIC_{ta_perform}'
     
     # udeepsc
-    best_model_path1 = get_best_checkpoint(folder, "udeepscM3")
+    best_model_path1 = get_best_checkpoint(folder, "checkpoint")
     print(f'{best_model_path1 = }')
     
     # udeepsc Noma
-    best_model_path2 = get_best_checkpoint(folderSIC, "CRSIC")
+    best_model_path2 = get_best_checkpoint(folderSIC, "checkpoint")
     print(f'{best_model_path2 = }')
     
     # udeepsc Noma no SIC
-    best_model_path3 = get_best_checkpoint(folder_noSIC, "powerSum")
+    best_model_path3 = get_best_checkpoint(folder_noSIC, "checkpoint")
     print(f'{best_model_path3 = }')
 
     # udeepsc Noma perfect SIC
-    best_model_path4 = get_best_checkpoint(folder_pfSIC, "udeepscM3")
+    best_model_path4 = get_best_checkpoint(folder_pfSIC, "checkpoint")
     print(f'{best_model_path4 = }')
     
     opts.model = 'UDeepSC_SepCD_model'
     opts.ta_perform = ta_perform
     opts.batch_size = 32
     
-    testset, dataloader = get_test_dataloader(opts)
+    testset, dataloader = get_test_dataloader(opts, infra=False)
     SNRrange = [-6, 12]
     
     metric1 = test_SNR(ta_perform, SNRrange, power_constraint_static, best_model_path1, opts, device, dataloader)
@@ -678,6 +634,10 @@ def main_test_Modal_SNR():
 
     
     test_set = {
+        "Title": "AVE task test model train in homogeneous modal",
+        # "Title": "Msa test image & speech",
+        "Test Samples": len(testset),
+        "power": power_constraint, 
         'udeepsc': str(best_model_path1),
         'perfect SIC': str(best_model_path4),
         'udeepsc NOMA': str(best_model_path2),
@@ -688,7 +648,7 @@ def main_test_Modal_SNR():
     
     labels = ["U-DeepSC", "U-DeepSC NOMA (perfect SIC)", "U-DeepSC NOMA (with SIC)", "U-DeepSC NOMA (w/o SIC)"]
     draw_line_chart(x, models, 
-                    y_lim= chart_args['y_lim'], 
+                    # y_lim= chart_args['y_lim'], 
                     labels=labels, 
                     title=chart_args['channel_type'], 
                     xlabel="SNR/dB", 
@@ -848,7 +808,7 @@ if __name__ == '__main__':
     # main_test1(True)
     # main_test_single()
     # main_test_SNR()
-    main_test_SNR_single()
-    # main_test_Modal_SNR()
+    # main_test_SNR_single()
+    main_test_Modal_SNR()
     # main_test_signals()
     # main_test_draw_from_read()
