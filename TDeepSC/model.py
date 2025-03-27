@@ -432,7 +432,7 @@ class TDeepSC_msa(nn.Module):
         return {'pos_embed', 'cls_token', 'mask_token'}
 
     def forward(self, text=None, img=None, speech=None, ta_perform=None, test_snr=torch.FloatTensor([-2])):
-        # x_text = self.text_encoder(input_ids=text, return_dict=False)[0]
+        x_text = self.text_encoder(input_ids=text, return_dict=False)[0]
         x_img = self.img_encoder(img, ta_perform)
         x_spe = self.spe_encoder(speech, ta_perform)
 
@@ -446,20 +446,20 @@ class TDeepSC_msa(nn.Module):
 
 
         x_img = self.img_encoder_to_channel(x_img)
-        # x_text = self.text_encoder_to_channel(x_text)
+        x_text = self.text_encoder_to_channel(x_text)
         x_spe = self.spe_encoder_to_channel(x_spe)
 
         x_img = self.img_channel_decoder(x_img)
         x_img = self.img_channel_to_decoder(x_img)
 
-        # x_text = self.text_channel_decoder(x_text)
-        # x_text = self.text_channel_to_decoder(x_text)
+        x_text = self.text_channel_decoder(x_text)
+        x_text = self.text_channel_to_decoder(x_text)
         
         x_spe = self.spe_channel_decoder(x_spe)
         x_spe = self.spe_channel_to_decoder(x_spe)
 
-        x = torch.cat([x_img,x_spe], dim=1)
-        # x = torch.cat([x_text,x_img,x_spe], dim=1)
+        # x = torch.cat([x_img,x_spe], dim=1)
+        x = torch.cat([x_text,x_img,x_spe], dim=1)
 
         query_embed = self.query_embedd.weight.unsqueeze(0).repeat(batch_size, 1, 1)
         x = self.decoder(query_embed, x, None, None, None) 

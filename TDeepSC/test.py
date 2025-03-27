@@ -131,8 +131,8 @@ def test_SNR(ta_perform:str, SNRrange:list[int], model_path, args,device, datalo
         y_true, y_pred = [], []
         for (imgs, texts, speechs, targets) in tqdm(dataloader):
             imgs, texts, speechs, targets = imgs.to(device), texts.to(device), speechs.to(device), targets.to(device)
-            # outputs = model(img=imgs, text=texts, speech=speechs, ta_perform=ta_perform)
-            outputs = model(text=texts, speech=speechs, ta_perform=ta_perform)
+            outputs = model(img=imgs, text=texts, speech=speechs, ta_perform=ta_perform)
+            # outputs = model(text=texts, speech=speechs, ta_perform=ta_perform)
             y_pred.append(outputs.detach().cpu().numpy())
             y_true.append(targets.detach().cpu().numpy())
     
@@ -149,8 +149,8 @@ def test_SNR(ta_perform:str, SNRrange:list[int], model_path, args,device, datalo
         for (imgs, speechs, targets, img2s) in tqdm(dataloader):
             imgs, speechs, targets = imgs.to(device), speechs.to(device), targets.to(device)
             img2s = img2s.to(device)
-            # outputs = model(img=imgs, speech=speechs,   ta_perform=ta_perform)
-            outputs = model(img=imgs, speech=speechs, img2=img2s,  ta_perform=ta_perform)
+            outputs = model(img=imgs, speech=speechs,   ta_perform=ta_perform)
+            # outputs = model(img=imgs, speech=speechs, img2=img2s,  ta_perform=ta_perform)
             y_pred.append(outputs.detach().cpu().numpy())
             y_true.append(targets.detach().cpu().numpy())
     
