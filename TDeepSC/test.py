@@ -56,10 +56,10 @@ def get_test_samples(args, batch_size=5):
     # print(str_type(inputs))
     return inputs, targets
 
-def get_test_dataloader(args, batch_size=5, infra=False):
+def get_test_dataloader(args, infra=False, shifts=0):
     """Return testset and test dataloader"""
     split = 'test' if args.ta_perform == 'ave' else 'val'
-    testset = build_dataset(is_train=False, args=args, split=split, infra=infra)
+    testset = build_dataset(is_train=False, args=args, split=split, infra=infra, shifts=shifts)
 
     sampler_test = torch.utils.data.SequentialSampler(testset)
     Collate_fn = collate_fn if args.ta_perform.startswith('msa') else None 
@@ -159,14 +159,51 @@ def test_SNR(ta_perform:str, SNRrange:list[int], model_path, args,device, datalo
         acc = compute_acc_AVE(y_true, y_pred, nb_batch)       
         
         return acc * 100
+
+def test_shift_data(ta_perform:str, shift_steps, model_path, args, device):
+    logger.info("Start test shift dataset")
     
+    args.resume = model_path
+    
+    model = get_model(args)
+    print(f'{args.resume = }')
+    checkpoint_model = load_checkpoint(model, args)
+    load_state_dict(model, checkpoint_model, prefix=args.model_prefix)
+    model.to(device)
+    
+    snr = 0
+
+    model.eval()
+    progress_bar = tqdm(shift_steps, leave=False, total=len(shift_steps), dynamic_ncols=True)
+    if ta_perform.startswith('msa'):
+        avg_acc = []
+        for step in progress_bar:
+            # collate = CollateShuff(step)
+            testset, dataloader = get_test_dataloader(args, shifts=step)
+            
+            test_progress = tqdm(dataloader, leave=False, total=len(dataloader), dynamic_ncols=True)
+            y_true, y_pred = [], []
+            for (imgs, texts, speechs, targets) in test_progress:
+                imgs, texts, speechs, targets = imgs.to(device), texts.to(device), speechs.to(device), targets.to(device)
+                outputs = model(img=imgs, text=texts, speech=speechs, ta_perform=ta_perform, test_snr = snr)
+                y_pred.append(outputs.detach().cpu().numpy())
+                y_true.append(targets.detach().cpu().numpy())
+        
+            y_true = np.concatenate(y_true, axis=0).squeeze()
+            y_pred = np.concatenate(y_pred, axis=0).squeeze()
+            acc = calc_metrics(y_true, y_pred) 
+            avg_acc.append(acc * 100)       
+        
+        return avg_acc
+    
+
 def main_test_SNR_single():
     opts = get_args()
     ta_perform = 'msa'
     device = 'cuda:0'
     device = torch.device(device)
 
-    result_output = ta_perform + "_result_TextSpe"
+    result_output = ta_perform + "_result"
     root = './output'
     models_dir = Path(root)
     
@@ -189,7 +226,7 @@ def main_test_SNR_single():
     opts.ta_perform = ta_perform
     opts.batch_size = 64
     
-    testset, dataloader = get_test_dataloader(opts, infra=False)
+    testset, dataloader = get_test_dataloader(args=opts, infra=False)
     SNRrange = [-6, 12]
     
     metric1 = test_SNR(ta_perform, SNRrange, best_model_path, opts, device, dataloader)
@@ -199,8 +236,8 @@ def main_test_SNR_single():
     x = [i for i in range(SNRrange[0], SNRrange[1] + 1)]
     models = [metric1] * len(x)
     test_setting = {
-        "Title": "MSA only 2 modal (text, speech)",
-        # "Title": "MSA Test",
+        # "Title": "MSA only 2 modal (text, speech)",
+        "Title": "MSA Test",
         "samples": len(testset),
         "Model": str(best_model_path),
         "Result": models
@@ -208,5 +245,64 @@ def main_test_SNR_single():
     
     save_result_JSON(test_setting, result_output)
 
+def main_test_shift():
+    opts = get_args()
+    ta_perform = 'msa'
+    device = 'cuda:0'
+    device = torch.device(device)
+
+    result_output = ta_perform + "_result_shift"
+    root = './output'
+    models_dir = Path(root)
+    
+    chart_args = {
+        'channel_type' : "AWGN channel (SNR = 0)",
+        'output': "acc_" + ta_perform,
+        'y_axis': "Accuracy (%)",
+        "y_lim" : [60, 85, 5],
+        # "y_lim" : [20, 62, 10],
+    }
+    
+    folder = models_dir / f'ckpt_{ta_perform}'
+    
+    # udeepsc
+    best_model_path = get_best_checkpoint(folder, "checkpoint")
+    print(f'{best_model_path = }')
+    
+    
+    opts.model = f'TDeepSC_{ta_perform}_model'
+    opts.ta_perform = ta_perform
+    opts.batch_size = 64
+    testset_size = 4654
+    
+    test_shifts = list(range(0, testset_size + 1, 400))
+    
+    metric1 = test_shift_data(ta_perform, test_shifts, best_model_path, opts, device)
+    
+    # print(snr12_bleus)
+    
+    models = [metric1]
+    test_setting = {
+        "Title": "MSA shift test",
+        # "samples": len(testset),
+        "Model": str(best_model_path),
+        "Result": models
+    }
+    
+    # save_result_JSON(test_setting, result_output)
+
+    labels = ["Upper Bound"]
+    draw_line_chart(test_shifts, models, 
+                    y_lim= chart_args['y_lim'],
+                    labels=labels, 
+                    title=chart_args['channel_type'], 
+                    xlabel="Shifts", 
+                    ylabel=chart_args['y_axis'], 
+                    output=chart_args['output'],
+                    # x_rotate=True
+                    )
+
+
 if __name__ == '__main__':
-    main_test_SNR_single()
+    # main_test_SNR_single()
+    main_test_shift()

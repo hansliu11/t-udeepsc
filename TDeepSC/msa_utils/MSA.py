@@ -81,17 +81,31 @@ class MOSI():
 
 
 class MSA(Dataset):
-    def __init__(self, config, train=True):
+    def __init__(self, config, train=True, shift_offset=0):
         dataset = MOSI(config)
  
         self.data = dataset.get_data(train)
         self.len = len(self.data)
+        self.shift_offset = shift_offset  # Fixed offset for shifting
 
         config.visual_size = self.data[0][0][1].shape[1]
         config.acoustic_size = self.data[0][0][2].shape[1]
 
     def __getitem__(self, index):
-        return self.data[index]
+        # Compute shifted index with wrap-around
+        shifted_index = (index + self.shift_offset) % self.len
+        
+        # Retrieve original text data
+        text_data = self.data[index][0][0]  
+        
+        # Retrieve shifted image and speech data
+        image_data = self.data[shifted_index][0][1]  
+        speech_data = self.data[shifted_index][0][2]  
+        
+        # Keep targets unchanged
+        target = self.data[index][1]  
+
+        return ((text_data, image_data, speech_data, self.data[index][0][3]), target)
 
     def __len__(self):
         return self.len

@@ -25,6 +25,7 @@ from timm.loss import LabelSmoothingCrossEntropy
 from sklearn.metrics import confusion_matrix
 from sklearn.metrics import precision_recall_fscore_support
 from sklearn.metrics import classification_report, accuracy_score, f1_score
+import matplotlib.pyplot as plt
 ## Including pakages
 def sel_criterion(args):
     if args.ta_perform.startswith('imgc'):
@@ -256,6 +257,59 @@ def train_log(epoch, states:dict):
             log_data[f"{metric}"] = val
 
     wandb.log(log_data)
+
+def draw_line_chart(x, y_lists, y_lim:list[float]=None, labels=None, title="Line Chart", xlabel="X-axis", ylabel="Y-axis", output="plot", x_rotate: bool=False):
+    """
+    Draws a line chart using two lists for x and y coordinates.
+
+    Inputs:
+        x (list): Values for the x-axis.
+        y_lists (list of lists): A list of lists where each inner list represents y-values for one line.
+        y_lim: min and max y-axis ticks [min, max]
+        labels (list): Labels for each line. Default is None, which will use a generic label.
+        title (str): Title of the chart. Default is "Line Chart".
+        xlabel (str): Label for the x-axis. Default is "X-axis".
+        ylabel (str): Label for the y-axis. Default is "Y-axis".
+        output: output path of the plot.
+        x_rotate: If xticks label is overlapped, rotate for 45 degree
+    """
+    if not all(len(x) == len(y) for y in y_lists):
+        raise ValueError("All y-lists must have the same length as the x-list.")
+    
+    plt.figure(figsize=(6, 7))  # Set the figure size
+    
+    # Plot each y-list against the x-list
+    for i, y in enumerate(y_lists):
+        label = labels[i] if labels and i < len(labels) else f"Line {i+1}"
+        plt.plot(x, y, marker='o', linestyle='-', label=label)  # Plot each line
+    
+    # Set titles and labels
+    x_tick = [a for i, a in enumerate(x) if i % 2 == 0]
+    
+    if(y_lim):
+        y_tick = np.arange(y_lim[0], y_lim[1] + 1, y_lim[2])
+        plt.yticks(y_tick, labels=y_tick)
+    
+    plt.xticks(x_tick, labels=x_tick)
+
+    # Adjust rotation if overlap is detected
+    if x_rotate:
+        plt.xticks(rotation=45)
+    
+    plt.title(title, fontsize = 14)
+    plt.xlabel(xlabel, fontsize=14)
+    plt.ylabel(ylabel, fontsize=14)
+    # Modify tick label size
+    # plt.tick_params(axis='both', which='major', labelsize=14)
+    
+    # Add a legend to distinguish the lines
+    plt.legend()
+    plt.grid(True)  # Add grid lines
+    
+    plt.tight_layout()  # Adjust layout to fit elements properly
+    # plt.show() # on workstation, plt.show() might deadlock due to the workstation
+    
+    plt.savefig(output + '.png')
     
 def validation_log(ta_perform, epoch, stats):
     log_data = {"epoch": epoch}

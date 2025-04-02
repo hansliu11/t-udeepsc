@@ -60,7 +60,7 @@ class BatchSchedulerSampler(torch.utils.data.sampler.Sampler):
         self.epoch = epoch
 
 
-def build_dataset(is_train, args, split: Literal['val', 'test'] = 'val', infra: bool = False):
+def build_dataset(is_train, args, split: Literal['val', 'test'] = 'val', infra: bool = False, shifts:int = 0):
     if args.ta_perform.startswith('img'):
         transform = build_img_transform(is_train, args)
         print("Transform = ")
@@ -93,7 +93,7 @@ def build_dataset(is_train, args, split: Literal['val', 'test'] = 'val', infra: 
         
     elif args.ta_perform.startswith('msa'):
         config_msa = Config_MSA()
-        dataset = MSA(config_msa, train=is_train)
+        dataset = MSA(config_msa, train=is_train, shift_offset=shifts)
     
     elif args.ta_perform.startswith('ave'):
         split = 'train' if is_train else split
