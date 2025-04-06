@@ -79,7 +79,7 @@ def build_dataloader(ta_sel, trainsets, args):
 
 
 
-def build_dataset_test(is_train, args, split: Literal['val', 'test'] = 'val', infra: bool = False):
+def build_dataset_test(is_train, args, split: Literal['val', 'test'] = 'val', infra: bool = False, shuffle:bool=False, shifts:int = 0):
     if args.ta_perform.startswith('img'):
         transform = build_img_transform(is_train, args)
         print("Transform = ")
@@ -119,7 +119,7 @@ def build_dataset_test(is_train, args, split: Literal['val', 'test'] = 'val', in
         
     elif args.ta_perform.startswith('msa'):
         config_msa = Config_MSA()
-        dataset = MSA(config_msa, train=is_train)
+        dataset = MSA(config_msa, train=is_train, shift_offset=shifts, shuffle_test=shuffle, seed=args.seed)
     
     elif args.ta_perform.startswith('ave'):
         config_ave = Config_AVE()

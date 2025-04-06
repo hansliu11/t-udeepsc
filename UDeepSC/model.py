@@ -1285,15 +1285,15 @@ class UDeepSC_M3_withSIC(UDeepSC_M3):
 
             x = torch.cat([x_img,x_text], dim=1)
         elif ta_perform.startswith('msa'):
-            # x_text = Rx_sigs[0]
-            # x_text = self.msa_text_channel_to_decoder(x_text)
-            x_img = Rx_sigs[0]
+            x_text = Rx_sigs[0]
+            x_text = self.msa_text_channel_to_decoder(x_text)
+            x_img = Rx_sigs[1]
             x_img = self.msa_img_channel_to_decoder(x_img)
-            x_spe = Rx_sigs[1]
+            x_spe = Rx_sigs[2]
             x_spe = self.msa_spe_channel_to_decoder(x_spe)
             
-            x = torch.cat([x_img, x_spe], dim=1)
-            # x = torch.cat([x_img, x_text, x_spe], dim=1)
+            # x = torch.cat([x_img, x_spe], dim=1)
+            x = torch.cat([x_img, x_text, x_spe], dim=1)
             # print(x.shape) # (batch_size, 3, 128)
 
         elif ta_perform.startswith('ave'):
@@ -2061,7 +2061,7 @@ class UDeepSCUplinkNOMA(nn.Module):
             x = torch.stack((x_img, x_text), dim=1)
             x = self.transmit(x, 1, noise_snr, 2)
         elif ta_perform.startswith('msa'):
-            power = 2
+            power = 3
             x = torch.stack((x_img, x_text, x_spe), dim=1)
             # x = torch.stack((x_img, x_spe), dim=1)
             x = self.transmit(x, 1, noise_snr, power)

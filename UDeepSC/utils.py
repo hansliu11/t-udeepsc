@@ -262,7 +262,7 @@ def load_state_dict(model, state_dict, prefix='', ignore_missing="relative_posit
     if len(error_msgs) > 0:
         print('\n'.join(error_msgs))
     
-def draw_line_chart(x, y_lists, y_lim:list[float]=None, labels=None, title="Line Chart", xlabel="X-axis", ylabel="Y-axis", output="plot"):
+def draw_line_chart(x, y_lists, y_lim:list[float]=None, labels=None, title="Line Chart", xlabel="X-axis", ylabel="Y-axis", output="plot", x_rotate: bool=False):
     """
     Draws a line chart using two lists for x and y coordinates.
 
@@ -286,23 +286,28 @@ def draw_line_chart(x, y_lists, y_lim:list[float]=None, labels=None, title="Line
         plt.plot(x, y, marker='o', linestyle='-', label=label)  # Plot each line
     
     # Set titles and labels
-    x_tick = np.arange(x[0], x[-1] + 1, 2)
+    x_tick = [a for i, a in enumerate(x) if i % 2 == 0]
     
     if(y_lim):
         y_tick = np.arange(y_lim[0], y_lim[1] + 1, y_lim[2])
         plt.yticks(y_tick, labels=y_tick)
     
-    plt.title(title, fontsize = 16)
     plt.xticks(x_tick, labels=x_tick)
-    plt.xlabel(xlabel, fontsize=16)
-    plt.ylabel(ylabel, fontsize=16)
-    # Modify tick label size
-    plt.tick_params(axis='both', which='major', labelsize=14)
+
+    # Adjust rotation if overlap is detected
+    if x_rotate:
+        plt.xticks(rotation=45)
     
-    plt.grid(True)  # Add grid lines
+    plt.title(title, fontsize = 14)
+    plt.xlabel(xlabel, fontsize=14)
+    plt.ylabel(ylabel, fontsize=14)
+    # Modify tick label size
+    # plt.tick_params(axis='both', which='major', labelsize=14)
     
     # Add a legend to distinguish the lines
     plt.legend()
+    plt.grid(True)  # Add grid lines
+    
     plt.tight_layout()  # Adjust layout to fit elements properly
     # plt.show() # on workstation, plt.show() might deadlock due to the workstation
     

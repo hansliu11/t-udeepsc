@@ -81,17 +81,43 @@ class MOSI():
 
 
 class MSA(Dataset):
-    def __init__(self, config, train=True):
+    def __init__(self, config, train=True, shift_offset=0, shuffle_test=False, seed=42):
         dataset = MOSI(config)
  
         self.data = dataset.get_data(train)
         self.len = len(self.data)
 
+        self.shift_offset = shift_offset  # Shift amount
+        self.shuffle_test = shuffle_test  # Whether to shuffle
+        self.indices = np.arange(self.len)
+
+        # If shuffling is enabled, apply it
+        if shuffle_test:
+            np.random.seed(seed)  
+            np.random.shuffle(self.indices)  
+
         config.visual_size = self.data[0][0][1].shape[1]
         config.acoustic_size = self.data[0][0][2].shape[1]
 
     def __getitem__(self, index):
-        return self.data[index]
+        if self.shuffle_test:
+            # Use shuffled index if shuffling is enabled
+            mapped_index = self.indices[index]
+        else:
+            # Apply shifting with wrap-around if shuffling is not enabled
+            mapped_index = (index + self.shift_offset) % self.len  
+
+        # Keep text data unchanged
+        text_data = self.data[index][0][0]
+
+        # Fetch modified image and speech data
+        image_data = self.data[mapped_index][0][1]  
+        speech_data = self.data[mapped_index][0][2]  
+        
+        # Keep targets unchanged
+        target = self.data[index][1]  
+
+        return ((text_data, image_data, speech_data, self.data[index][0][3]), target)
 
     def __len__(self):
         return self.len

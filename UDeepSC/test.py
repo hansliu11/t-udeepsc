@@ -74,20 +74,17 @@ def get_test_samples(args, batch_size=5):
     print(str_type(sel_batch))
     return sel_batch, targets
 
-def get_test_dataloader(args, shuffle=False, infra=False):
+def get_test_dataloader(args, shuffle=False, infra=False, shifts=0):
     """Return testset and test dataloader"""
     split = 'test' if args.ta_perform == 'ave' else 'val'
-    testset = build_dataset_test(is_train=False, args=args, split=split, infra=infra)
+    testset = build_dataset_test(is_train=False, args=args, split=split, infra=infra, shuffle=shuffle, shifts=shifts)
     
     if args.textr_euro:
         indices = list(range(args.batch_size * 1000))
         testset = Subset(testset, indices)
 
     sampler_test = torch.utils.data.SequentialSampler(testset)
-    Collate_fn = None
-    if args.ta_perform.startswith('msa'):
-        Collate_fn = collate_fn_Shuff if shuffle else collate_fn  
-        print(Collate_fn)
+    Collate_fn = collate_fn if args.ta_perform.startswith('msa') else None 
     test_dataloader= torch.utils.data.DataLoader(
         testset, sampler=sampler_test, batch_size=int(1.0 * args.batch_size),
         num_workers=4, pin_memory=args.pin_mem, drop_last=False, collate_fn=Collate_fn)
@@ -338,7 +335,42 @@ def test_SNR(ta_perform:str, SNRrange:list[int], power_constraint, model_path, a
         
         return avg_acc
         
+def test_shift_data(ta_perform:str, shift_steps:list[int], power_constraint, model_path, args, device, snr=0):
+    logger.info("Start test shift dataset")
+    
+    args.resume = model_path
+    
+    model = get_model(args)
+    print(f'{args.resume = }')
+    checkpoint_model = load_checkpoint(model, args)
+    load_state_dict(model, checkpoint_model, prefix=args.model_prefix)
+    model.to(device)
+    
+    snr = torch.FloatTensor([snr])
+
+    model.eval()
+    progress_bar = tqdm(shift_steps, leave=False, total=len(shift_steps), dynamic_ncols=True)
+    if ta_perform.startswith('msa'):
+        avg_acc = []
+        for step in progress_bar:
+            # collate = CollateShuff(step)
+            testset, dataloader = get_test_dataloader(args, shifts=step)
+            
+            test_progress = tqdm(dataloader, leave=False, total=len(dataloader), dynamic_ncols=True)
+            y_true, y_pred = [], []
+            for (imgs, texts, speechs, targets) in test_progress:
+                imgs, texts, speechs, targets = imgs.to(device), texts.to(device), speechs.to(device), targets.to(device)
+                outputs = model(img=imgs, text=texts, speech=speechs, ta_perform=ta_perform, power_constraint=power_constraint, test_snr=snr)
+                y_pred.append(outputs.detach().cpu().numpy())
+                y_true.append(targets.detach().cpu().numpy())
         
+            y_true = np.concatenate(y_true, axis=0).squeeze()
+            y_pred = np.concatenate(y_pred, axis=0).squeeze()
+            acc = calc_metrics(y_true, y_pred) 
+            avg_acc.append(acc * 100)       
+        
+        return avg_acc
+
 def test_features(ta:str, test_snr: torch.FloatTensor, power_constraint, model_path, args, device, sel_batch):
     logger.info("Start test features before transmission and after")
     
@@ -734,49 +766,95 @@ def main_test1(test_bleu=False):
     
     received = text_test(ta_perform, inputs, test_snr, model, device)
     
-def main_test_single():
+def main_test_shift():
     opts = get_args()
-    ta_perform = 'textr'
-    device = 'cuda'
+    ta_perform = 'msa'
+    device = 'cuda:0'
+    device = torch.device(device)
+    power_constraint_static = [1.0, 1.0, 1.0]
+    power_constraint = [0.5, 1.0, 1.5]
+
+    result_output = ta_perform + "_result_shift_diff"
+    root = './output'
+    models_dir = Path(root)
     
-    if ta_perform.startswith('imgc'):
-        task_fold = 'imgc'
-    elif ta_perform.startswith('imgr'):
-        task_fold = 'imgr'
-    elif ta_perform.startswith('textc'):
-        task_fold = 'textc'
-    elif ta_perform.startswith('textr'):
-        task_fold = 'ckpt_textr'
-        task_fold = 'textr_smooth_01'
-    elif ta_perform.startswith('vqa'):
-        task_fold = 'vqa'
-    elif ta_perform.startswith('msa'):
-        task_fold = 'msa'
+    chart_args = {
+        'channel_type' : "AWGN channel (SNR = 0)",
+        'output': "acc_" + ta_perform + "_result" + "_shift_diff",
+        'y_axis': "Accuracy (%)",
+        "y_lim" : [55, 83, 5],
+        # "y_lim" : [20, 62, 10],
+        "vqa_upper": 55.8,
+        "msa_upper": 83
+    }
+    
+    root = './output'
+    models_dir = Path(root)
+    
+    folder = models_dir / f'udeepsc_{ta_perform}'
+    folderSIC = models_dir / f'NOMA_{ta_perform}'
+    folder_noSIC = models_dir / f'noSIC_{ta_perform}'
+    folder_pfSIC = models_dir / f'perfectSIC_{ta_perform}'
+    
+    # udeepsc
+    best_model_path1 = get_best_checkpoint(folder, "udeepscM3Old")
+    print(f'{best_model_path1 = }')
+    
+    # udeepsc Noma
+    best_model_path2 = get_best_checkpoint(folderSIC, "CRSIC")
+    print(f'{best_model_path2 = }')
+    
+    # udeepsc Noma no SIC
+    best_model_path3 = get_best_checkpoint(folder_noSIC, "powerSumOld")
+    print(f'{best_model_path3 = }')
 
-    folder = Path('./output'+ '/' + task_fold)
-
-    best_model_path = get_best_checkpoint(folder, 'snr12new')
-    print(f'{best_model_path = }')
-    opts.model = 'UDeepSC_new_model'
-    opts.resume = best_model_path
+    # udeepsc Noma perfect SIC
+    best_model_path4 = get_best_checkpoint(folder_pfSIC, "udeepscM3Old")
+    print(f'{best_model_path4 = }')
+    
     opts.ta_perform = ta_perform
-    opts.device = device
+    opts.batch_size = 10
+    testset_size = 4654
+    test_shifts = list(range(0, 501, 50)) + list(range(1000, testset_size + 1, 1000))
+    snr = -10
     
-    model = get_model(opts)
-    print(f'{opts.resume = }')
-    checkpoint_model = load_checkpoint(model, opts)
-    load_state_dict(model, checkpoint_model, prefix=opts.model_prefix)
-    
-    tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
-    text = "Water boils at 100 degrees Celsius under normal conditions."
-    text =  torch.tensor(rpad(tokenizer.encode(text, add_special_tokens=True), n=66)).unsqueeze(0)
-    print(text.shape)
+    opts.model = 'UDeepSC_SepCD_model'
+    metric1 = test_shift_data(ta_perform, test_shifts, power_constraint_static, best_model_path1, opts, device, snr)
+    metric4 = test_shift_data(ta_perform, test_shifts, power_constraint, best_model_path4, opts, device, snr)
 
-    # SNR for testing, default = 12
-    # range: [-6, 12]
-    test_snr = torch.FloatTensor([12])
+    opts.model = 'UDeepSC_NOMA_new_model'
+    metric2 = test_shift_data(ta_perform, test_shifts, power_constraint, best_model_path2, opts, device, snr)
     
-    received = text_test_single(ta_perform, text, test_snr, model, device)
+    # power_constraint = [3, 3, 3]
+    opts.model = 'UDeepSC_NOMANoSIC_model'
+    metric3 = test_shift_data(ta_perform, test_shifts, power_constraint, best_model_path3, opts, device, snr)
+    
+    # print(snr12_bleus)
+    
+    models = [metric1, metric4, metric2, metric3]
+    
+    test_set = {
+        "Title": "MSA shift test",
+        "SNR": snr,
+        "power": power_constraint, 
+        'udeepsc': str(best_model_path1),
+        'perfect SIC': str(best_model_path4),
+        'udeepsc NOMA': str(best_model_path2),
+        'no SIC': str(best_model_path3),
+        'result': models
+    }
+    
+    save_result_JSON(test_set, result_output)
+
+    labels = ["U-DeepSC", "U-DeepSC with perfect SIC", "U-DeepSC NOMA (with SIC)", "U-DeepSC NOMA (w/o SIC)"]
+    # draw_line_chart(test_shifts, models, 
+    #                 y_lim= chart_args['y_lim'],
+    #                 labels=labels, 
+    #                 title=chart_args['channel_type'], 
+    #                 xlabel="Shifts", 
+    #                 ylabel=chart_args['y_axis'], 
+    #                 output=chart_args['output'],
+    #                 )
 
 def main_test_draw_from_read():
     ta = 'vqa'
@@ -806,9 +884,9 @@ def main_test_draw_from_read():
 if __name__ == '__main__':
     # main_test1()
     # main_test1(True)
-    # main_test_single()
     # main_test_SNR()
     # main_test_SNR_single()
-    main_test_Modal_SNR()
+    # main_test_Modal_SNR()
     # main_test_signals()
     # main_test_draw_from_read()
+    main_test_shift()
