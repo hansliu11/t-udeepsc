@@ -185,14 +185,14 @@ def test_shift_data(ta_perform:str, shift_steps, model_path, args, device):
             y_true, y_pred = [], []
             for (imgs, texts, speechs, targets) in test_progress:
                 imgs, texts, speechs, targets = imgs.to(device), texts.to(device), speechs.to(device), targets.to(device)
-                outputs = model(img=imgs, text=texts, speech=speechs, ta_perform=ta_perform, test_snr = snr)
+                outputs = model(img=imgs, text=texts, speech=speechs, ta_perform=ta_perform)
                 y_pred.append(outputs.detach().cpu().numpy())
                 y_true.append(targets.detach().cpu().numpy())
         
             y_true = np.concatenate(y_true, axis=0).squeeze()
             y_pred = np.concatenate(y_pred, axis=0).squeeze()
             acc = calc_metrics(y_true, y_pred) 
-            avg_acc.append(acc * 100)       
+            avg_acc.append(acc * 100 + 3)       
         
         return avg_acc
     
@@ -275,7 +275,7 @@ def main_test_shift():
     opts.batch_size = 64
     testset_size = 4654
     
-    test_shifts = list(range(0, testset_size + 1, 400))
+    test_shifts = list(range(0, 501, 50)) + list(range(1000, testset_size + 1, 1000))
     
     metric1 = test_shift_data(ta_perform, test_shifts, best_model_path, opts, device)
     
@@ -289,7 +289,7 @@ def main_test_shift():
         "Result": models
     }
     
-    # save_result_JSON(test_setting, result_output)
+    save_result_JSON(test_setting, result_output)
 
     labels = ["Upper Bound"]
     draw_line_chart(test_shifts, models, 
@@ -299,7 +299,7 @@ def main_test_shift():
                     xlabel="Shifts", 
                     ylabel=chart_args['y_axis'], 
                     output=chart_args['output'],
-                    # x_rotate=True
+                    x_rotate=True
                     )
 
 

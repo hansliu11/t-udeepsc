@@ -281,16 +281,17 @@ def draw_line_chart(x, y_lists, y_lim:list[float]=None, labels=None, title="Line
     # Plot each y-list against the x-list
     for i, y in enumerate(y_lists):
         label = labels[i] if labels and i < len(labels) else f"Line {i+1}"
-        plt.plot(x, y, marker='o', linestyle='-', label=label)  # Plot each line
+        plt.plot(range(len(x)), y, marker='o', linestyle='-', label=label)  # Plot each line
     
     # Set titles and labels
-    x_tick = [a for i, a in enumerate(x) if i % 2 == 0]
+    # x_tick_positions = np.linspace(0, len(x) - 1, num=len(x) // 2 + 1, dtype=int)  
+    # x_tick = [x[i] for i in x_tick_positions]  
     
     if(y_lim):
         y_tick = np.arange(y_lim[0], y_lim[1] + 1, y_lim[2])
         plt.yticks(y_tick, labels=y_tick)
     
-    plt.xticks(x_tick, labels=x_tick)
+    plt.xticks(range(len(x)), labels=[str(a) for a in x]) 
 
     # Adjust rotation if overlap is detected
     if x_rotate:
@@ -304,7 +305,7 @@ def draw_line_chart(x, y_lists, y_lim:list[float]=None, labels=None, title="Line
     
     # Add a legend to distinguish the lines
     plt.legend()
-    plt.grid(True)  # Add grid lines
+    plt.grid(axis='y', linestyle='--', alpha=0.7)  # Add y-axis grid line only
     
     plt.tight_layout()  # Adjust layout to fit elements properly
     # plt.show() # on workstation, plt.show() might deadlock due to the workstation
