@@ -1924,7 +1924,7 @@ class UDeepSCUplinkNOMA(nn.Module):
     def get_num_layers(self):
         return len(self.blocks)
     
-    def transmit(self, signal: torch.Tensor, user_dim_index: int, SNRdb: torch.FloatTensor, power_constraint: float):
+    def transmit(self, signal: torch.Tensor, user_dim_index: int, SNRdb: torch.FloatTensor, power_constraint: list[float]):
         """
             Args:
                 signal: a complex tensor representing the signals from multiple transmitter (user).
@@ -1935,8 +1935,9 @@ class UDeepSCUplinkNOMA(nn.Module):
                 the signal with interference and superposition for the receiver
                 will have dimension (batch_size, user_dim, *dim, symbol_dim)
         """
-        # print(f"Transmid Signal Dim = {signal.shape}")
-        signal, _ = power_norm_batchwise(signal, power_constraint)
+        # print(f"Transmitted Signal Dim = {signal.shape}")
+        power_constraint = torch.tensor(power_constraint)
+        signal = power_normlize_superimposed(signal, power_constraint)
         signal = tensor_real2complex(signal, 'concat')
         
         # superimpose and add noise
@@ -1954,6 +1955,122 @@ class UDeepSCUplinkNOMA(nn.Module):
     @torch.jit.ignore
     def no_weight_decay(self):
         return {'pos_embed', 'cls_token', 'mask_token'}
+
+    def get_signals(self, text=None, img=None, speech=None, img2=None, ta_perform=None, power_constraint:list[float]=[1, 1, 1], test_snr:torch.FloatTensor=torch.FloatTensor([12]), channel_gain_var: list[list[float]] | torch.Tensor = None):
+        """
+            Input:
+                text: text data (tokenized first) for task need text
+                img: image data for task need image
+                speech: audio data for task need speech
+                ta_perform: The task to be eval (execute)
+                power_constraint: The power constraint of each user [text, img, speech]
+            Output:
+                Task result executed by decoder of receiver
+                Different shape for different tasks and data type
+                Ex:
+                    Textr: (batch_size, seq length, vocab size) for vacab size = 34000
+        """
+        n_user = len(power_constraint)
+
+        if isinstance(self.channel, RayleighFadingMultiChannel):
+            self.channel_gain_var = [[1.0]] * n_user if channel_gain_var is None else channel_gain_var
+
+        if text is not None:
+            x_text = self.text_encoder(ta_perform, text, return_dict=False)[0]
+            power = power_constraint[0]
+            # x_text = self.LN(x_text)
+            if ta_perform.startswith('textc'):
+                x_text = x_text[:,0,:].unsqueeze(1)
+                x_text = self.textc_encoder_to_channel(x_text)
+            elif ta_perform.startswith('vqa'):
+                x_text = x_text[:,0:3,:]
+                x_text = self.vqa_text_encoder_to_channel(x_text)
+            elif ta_perform.startswith('msa'):
+                x_text = x_text[:,-2:-1,:]
+                x_text = self.msa_text_encoder_to_channel(x_text)
+
+            x_text_norm, _ = power_norm_batchwise(x_text, power)
+            
+        if img is not None:
+            AVE_batch_size = img.shape[0]
+            if ta_perform.startswith('ave'):
+                img = img.view(img.size(0) * img.size(1), -1, 512) # (batch_size * time_steps, 49, 512)
+
+            x_img = self.img_encoder(img, ta_perform)
+            if ta_perform.startswith('imgc'):
+                power = power_constraint[0]
+                x_img = x_img[:,0,:].unsqueeze(1)
+                x_img = self.imgc_encoder_to_channel(x_img)
+                
+            elif ta_perform.startswith('vqa'):
+                power = power_constraint[1]
+                x_img = x_img[:,0:3,:]
+                x_img = self.vqa_img_encoder_to_channel(x_img)
+                
+            elif ta_perform.startswith('msa'):
+                power = power_constraint[1]
+                x_img = x_img[:,0,:].unsqueeze(1)
+                x_img = self.msa_img_encoder_to_channel(x_img)
+
+            elif ta_perform.startswith('ave'):
+                power = power_constraint[0]
+                x_img = x_img[:,0,:].unsqueeze(1)
+                x_img = self.ave_img_encoder_to_channel(x_img)
+
+            x_img_norm, _ = power_norm_batchwise(x_img, power)
+            
+        if speech is not None:
+            if ta_perform.startswith('ave'):
+                speech = speech.view(-1, speech.size(-1)) # (batch_size * time_steps, 128)
+
+            x_spe = self.spe_encoder(speech, ta_perform)
+            if ta_perform.startswith('msa'):
+                power = power_constraint[2]
+                x_spe = x_spe[:,0,:].unsqueeze(1)
+                x_spe = self.msa_spe_encoder_to_channel(x_spe)
+            
+            elif ta_perform.startswith('ave'):
+                power = power_constraint[1]
+                x_spe = x_spe[:,0,:].unsqueeze(1)
+                x_spe = self.ave_spe_encoder_to_channel(x_spe)
+            
+            x_spe_norm, _ = power_norm_batchwise(x_spe, power)
+        
+        if img2 is not None:
+            if ta_perform.startswith('ave'):
+                img2 = img2.view(img2.size(0) * img2.size(1), -1, 512) # (batch_size * time_steps, 49, 512)
+                x_img2 = self.img2_encoder(img2, ta_perform)
+                
+                power = power_constraint[2]
+                x_img2 = x_img2[:,0,:].unsqueeze(1)
+                x_img2 = self.ave_img2_encoder_to_channel(x_img2)
+            
+        if ta_perform.startswith('img'):
+            x_img = x_img.unsqueeze(1)
+
+        elif ta_perform.startswith('text'):
+            x_text = x_text.unsqueeze(1)
+
+        elif ta_perform.startswith('vqa'):
+            x = torch.stack((x_img, x_text), dim=1)
+
+        elif ta_perform.startswith('msa'):
+            power = torch.tensor(power_constraint)
+            ## stack -> power normalizated
+            x = torch.stack((x_img, x_text, x_spe), dim=1)
+            x = power_normlize_superimposed(x, power).clone().detach()
+            # x = torch.sum(x, dim=1)
+
+            ## power normalizated -> stack
+            x_norm = torch.stack((x_img_norm, x_text_norm, x_spe_norm), dim=1).clone().detach()
+            # x_norm = torch.sum(x_norm, dim=1)
+
+        elif ta_perform.startswith('ave'):
+            power = 1
+            x = torch.stack((x_img, x_spe), dim=1)
+        
+        return x, x_norm
+
 
     def forward(self, text=None, img=None, speech=None, img2=None, ta_perform=None, power_constraint:list[float]=[1, 1, 1], test_snr:torch.FloatTensor=torch.FloatTensor([12]), channel_gain_var: list[list[float]] | torch.Tensor = None):
         """
@@ -1995,7 +2112,7 @@ class UDeepSCUplinkNOMA(nn.Module):
                 x_text = x_text[:,-2:-1,:]
                 x_text = self.msa_text_encoder_to_channel(x_text)
 
-            # x_text = power_norm_batchwise(x_text, power)
+            # x_text, _ = power_norm_batchwise(x_text, power)
             
         if img is not None:
             AVE_batch_size = img.shape[0]
@@ -2023,7 +2140,7 @@ class UDeepSCUplinkNOMA(nn.Module):
                 x_img = x_img[:,0,:].unsqueeze(1)
                 x_img = self.ave_img_encoder_to_channel(x_img)
 
-            # x_img = power_norm_batchwise(x_img, power)
+            # x_img, _ = power_norm_batchwise(x_img, power)
             
         if speech is not None:
             if ta_perform.startswith('ave'):
@@ -2040,7 +2157,7 @@ class UDeepSCUplinkNOMA(nn.Module):
                 x_spe = x_spe[:,0,:].unsqueeze(1)
                 x_spe = self.ave_spe_encoder_to_channel(x_spe)
             
-            # x_spe = power_norm_batchwise(x_spe, power)
+            # x_spe, _ = power_norm_batchwise(x_spe, power)
         
         if img2 is not None:
             if ta_perform.startswith('ave'):
@@ -2061,10 +2178,9 @@ class UDeepSCUplinkNOMA(nn.Module):
             x = torch.stack((x_img, x_text), dim=1)
             x = self.transmit(x, 1, noise_snr, 2)
         elif ta_perform.startswith('msa'):
-            power = 3
             x = torch.stack((x_img, x_text, x_spe), dim=1)
             # x = torch.stack((x_img, x_spe), dim=1)
-            x = self.transmit(x, 1, noise_snr, power)
+            x = self.transmit(x, 1, noise_snr, power_constraint)
 
         elif ta_perform.startswith('ave'):
             power = 1

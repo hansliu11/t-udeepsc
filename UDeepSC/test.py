@@ -9,6 +9,7 @@ import datetime
 
 import model  
 from utils import *
+from channel import signal_power
 from base_args import get_args
 from timm.utils import AverageMeter
 from einops import rearrange
@@ -414,49 +415,68 @@ def test_features(ta:str, test_snr: torch.FloatTensor, power_constraint, model_p
         
     return Tx_sigs, Rx_sigs
 
+def test_power_norm(ta_perform:str, power_constraint, model_path, args,device, dataloader:Iterable, output_path: Path):
+    output_path.mkdir(parents=True, exist_ok=True)
+    
+    args.resume = model_path
+    
+    model = get_model(args)
+    print(f'{args.resume = }')
+    checkpoint_model = load_checkpoint(model, args)
+    load_state_dict(model, checkpoint_model, prefix=args.model_prefix)
+    model.to(device)
+    
+    model.eval()
+    impose_norms = []
+    norm_imposes = []
+    if ta_perform.startswith('msa'):
+        snr = torch.FloatTensor([0])
+        for (imgs, texts, speechs, targets) in tqdm(dataloader):
+            imgs, texts, speechs, targets = imgs.to(device), texts.to(device), speechs.to(device), targets.to(device)
+            imposed_norm_sig, norm_imposed_sig  = model.get_signals(img=imgs, text=texts, speech=speechs, ta_perform=ta_perform, power_constraint=power_constraint, test_snr=snr)
+
+            impose_norms.append(imposed_norm_sig)
+            norm_imposes.append(norm_imposed_sig)
+    
+    with open(output_path / 'signal_pow.txt', 'w') as fout:
+        for x, x_norm in zip(impose_norms, norm_imposes):
+            print(f"{str_type(x)=}", file=fout)
+            print(f"{str_type(x_norm)=}", file=fout)
+            print(f"Power normalization after stack: \n {signal_power(x.flatten(2))=}", file=fout)
+            print(f"Power normalization before stack: \n {signal_power(x_norm.flatten(2))=}", file=fout)
+
+
 def main_test_signals():
     opts = get_args()
-    ta_perform = 'vqa'
+    ta_perform = 'msa'
     device = 'cuda:0'
     device = torch.device(device)
     power_constraint_static = [1.0, 1.0, 1.0]
     # power_constraint = [0.5, 1, 1.5]
-    power_constraint = [0.5, 1.5]
-    
-    if ta_perform.startswith('imgc'):
-        task_fold = 'imgc'
-    elif ta_perform.startswith('imgr'):
-        task_fold = 'imgr'
-    elif ta_perform.startswith('textc'):
-        task_fold = 'textc'
-    elif ta_perform.startswith('textr'):
-        task_fold = 'ckpt_textr'
-        task_fold = 'textr_smooth_005'
-    elif ta_perform.startswith('vqa'):
-        task_fold = 'udeepsc_vqa'
-        task_fold_SIC = 'NOMA_vqa'
-    elif ta_perform.startswith('msa'):
-        task_fold = 'udeepsc_msa'
-        task_fold_SIC = 'NOMA_msa'
+    # power_constraint = [0.5, 1.5]
+    # power_constraint = [0.5]
+    root = './output'
+    models_dir = Path(root)
 
-    folder = Path('./output/' + task_fold)
-    folderSIC = Path('./output/' + task_fold_SIC)
+    print(f"Power Constraint: {power_constraint_static}")
+    
+    folder = models_dir / f'udeepsc_{ta_perform}'
+    folderSIC = models_dir / f'NOMA_{ta_perform}'
+    folder_noSIC = models_dir / f'noSIC_{ta_perform}'
+    folder_pfSIC = models_dir / f'perfectSIC_{ta_perform}'
     
     # udeepsc
-    # best_model_path1 = get_best_checkpoint(folder, "checkpoint")
-    # print(f'{best_model_path1 = }')
+    best_model_path = get_best_checkpoint(folder_noSIC, "powerSum")
+    print(f'{best_model_path = }')
     
-    # udeepsc Noma
-    best_model_path2 = get_best_checkpoint(folderSIC, "CRSIC")
-    print(f'{best_model_path2 = }')
-
-    opts.model = 'UDeepSC_NOMA_new_model'
+    
+    opts.model = 'UDeepSC_NOMANoSIC_model'
     opts.ta_perform = ta_perform
+    opts.batch_size = 16
     
-    sel_batch, targets = get_test_samples(opts)
-    test_snr = torch.FloatTensor([12])
+    testset, dataloader = get_test_dataloader(opts)
     
-    Tx_signals, Rx_signals = test_features(ta_perform, test_snr, power_constraint,best_model_path2, opts, device, sel_batch)
+    test_power_norm(ta_perform, power_constraint_static, best_model_path, opts, device, dataloader, Path("/home/ldap/hansliu/t-udeepsc/UDeepSC/tmp/20250419_msa_noSIC_test"))
 
 def main_test_SNR():
     opts = get_args()
@@ -488,7 +508,7 @@ def main_test_SNR():
     folder_pfSIC = models_dir / f'perfectSIC_{ta_perform}'
     
     # udeepsc
-    best_model_path1 = get_best_checkpoint(folder, "udeepscM3")
+    best_model_path1 = get_best_checkpoint(folder, "udeepscM3Old")
     print(f'{best_model_path1 = }')
     
     # udeepsc Noma
@@ -500,7 +520,7 @@ def main_test_SNR():
     print(f'{best_model_path3 = }')
 
     # udeepsc Noma perfect SIC
-    best_model_path4 = get_best_checkpoint(folder_pfSIC, "udeepscM3")
+    best_model_path4 = get_best_checkpoint(folder_pfSIC, "udeepscM3Old")
     print(f'{best_model_path4 = }')
     
     opts.ta_perform = ta_perform
@@ -518,9 +538,9 @@ def main_test_SNR():
     metric2 = test_SNR(ta_perform, SNRrange, power_constraint, best_model_path2, opts, device, dataloader)
     
     
-    # power_constraint = [3, 3, 3]
+    power_constraint_static = [3, 3, 3]
     opts.model = 'UDeepSC_NOMANoSIC_model'
-    metric3 = test_SNR(ta_perform, SNRrange, power_constraint, best_model_path3, opts, device, dataloader)
+    metric3 = test_SNR(ta_perform, SNRrange, power_constraint_static, best_model_path3, opts, device, dataloader)
     
     # print(snr12_bleus)
     
@@ -816,7 +836,7 @@ def main_test_shift():
     opts.batch_size = 10
     testset_size = 4654
     test_shifts = list(range(0, 501, 50)) + list(range(1000, testset_size + 1, 1000))
-    snr = -10
+    snr = 0
     
     opts.model = 'UDeepSC_SepCD_model'
     metric1 = test_shift_data(ta_perform, test_shifts, power_constraint_static, best_model_path1, opts, device, snr)
@@ -834,7 +854,7 @@ def main_test_shift():
     models = [metric1, metric4, metric2, metric3]
     
     test_set = {
-        "Title": "MSA shift test",
+        "Title": "MSA shift test, fix image",
         "SNR": snr,
         "power": power_constraint, 
         'udeepsc': str(best_model_path1),
@@ -884,9 +904,9 @@ def main_test_draw_from_read():
 if __name__ == '__main__':
     # main_test1()
     # main_test1(True)
-    # main_test_SNR()
+    main_test_SNR()
     # main_test_SNR_single()
     # main_test_Modal_SNR()
     # main_test_signals()
     # main_test_draw_from_read()
-    main_test_shift()
+    # main_test_shift()

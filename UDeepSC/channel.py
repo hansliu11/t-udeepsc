@@ -221,8 +221,6 @@ def power_norm_batchwise(signal: torch.Tensor, power:float=1.0):
     power_constraint = torch.full((batchsize, 1), power).to(signal.device) # (batch_size, 1)
     K = num_elements // 2 # number of complex symbols
     
-    
-    
     # # make as complex signals (batch_size, num_complex, 2)
     # signal = signal.view(batchsize, K, 2)
     # signal_power = torch.sum((signal[:,:,0]**2 + signal[:,:,1]**2), dim=-1) / K
@@ -231,11 +229,53 @@ def power_norm_batchwise(signal: torch.Tensor, power:float=1.0):
     # # print("Signal after power normalize: " + str_type(signal))
     # signal = signal.view(signal_shape)
     
-    power = torch.sqrt(K * power_constraint / torch.sum(signal ** 2, dim=1, keepdim=True))
+    signal_power = torch.sum(torch.abs(signal ** 2), dim=-1, keepdim=True)
+    power = torch.sqrt(K * power_constraint / signal_power)
     signal = signal * power
     signal = torch.reshape(signal, (-1, *dim, signal_shape[-1]))
     
     return signal, power
+
+def power_normlize_superimposed(signal: torch.Tensor, power_constraint_per_complex_symbol:torch.FloatTensor=torch.FloatTensor([1])):
+    """
+            For signal that stack before normalized
+            Args:
+                signal: real tensor of shape (batch_size, n_user, *dim, symbol_dim)
+                power_constraint: float
+            Returns:
+                The same as signal, but power normalized.
+            
+    """
+    signal_shape = signal.shape
+    dim = tuple(signal.size()[2:-1])
+    batchsize, n_user, num_elements = signal_shape[0], signal_shape[1], signal_shape[-1]
+    signal = torch.flatten(signal, start_dim=2)
+    
+    power_constraint = power_constraint_per_complex_symbol.clone().detach().to(signal.device)  # (user,)
+    power_constraint = power_constraint.view(1, n_user, 1)
+    power_constraint = power_constraint.expand(batchsize, n_user, 1)
+    
+    K = num_elements // 2 # number of complex symbols
+    
+    signal_power = torch.sum(torch.abs(signal ** 2), dim=-1, keepdim=True)
+    power = torch.sqrt(K * power_constraint / signal_power)
+    signal = signal * power
+    signal = torch.reshape(signal, (-1, n_user, *dim, signal_shape[-1]))
+    
+    return signal
+
+def signal_power(signal: torch.Tensor):
+    """
+        Calculate the power of the signal, this works for both real and complex signal.
+        i.e., the signal is of shape (*batch_size, signal_length) where signal_length is even
+        and the last dimension is the complex signal
+
+        Args:
+            signal: real or complex tensor of shape (*batch_size, signal_length)
+        Returns:
+            real tensor of shape (*batch_size)
+    """
+    return torch.sum(torch.abs(signal ** 2), dim=-1)
 
 class SingleChannel():
     def interfere(Tx_sig: torch.Tensor, SNRdb: float) -> torch.Tensor:
@@ -316,9 +356,10 @@ class RayleighFadingSingleChannel(SingleChannel):
         """
         # channel_gain = CN(0, channel_gain_var)
         channel_gain = RayleighFadingSingleChannel.make_channel_gain_from_var(signal, channel_gain_var)
-        noise = AWGNSingleChannel.make_awgn_noise(signal, SNRdb)
+        signal = signal * channel_gain
 
-        signal = signal * channel_gain + noise
+        noise = AWGNSingleChannel.make_awgn_noise(signal, SNRdb)
+        signal = signal + noise
         signal /= channel_gain
 
         return signal
