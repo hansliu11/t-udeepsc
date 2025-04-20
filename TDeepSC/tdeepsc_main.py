@@ -156,6 +156,7 @@ def main(args):
     wandb.watch(model, criterion=criterion, log_freq=args.log_interval)
     print(f"Start training for {args.epochs} epochs")
     max_accuracy = 0.0
+    max_val_acc = float(0)
     start_time = time.time()
     progress_bar = tqdm(range(args.start_epoch, args.epochs), leave=False, dynamic_ncols=True)
     for epoch in progress_bar:
@@ -190,12 +191,7 @@ def main(args):
       
         ## logging training using wandb
         train_log(epoch + 1, train_stats)
-        
-        if args.output_dir and args.save_ckpt:
-            if (epoch + 1) % args.save_freq == 0 or epoch + 1 == args.epochs:
-                utils.save_model(
-                    args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
-                    loss_scaler=loss_scaler, epoch=epoch, model_ema=None)
+
         if dataloader_val is not None:
             if args.ta_perform.startswith('img') or args.ta_perform.startswith('text'):
                 test_stats = evaluate(ta_perform=args.ta_perform, 
@@ -230,6 +226,17 @@ def main(args):
                     print("%s : %.02f" % (ansType, test_stats['perAnswerType'][ansType]))
             elif args.ta_perform.startswith('ave'):
                 print("\n" + toColor(f"Validation accuracy of the model on the {len(valset)} test samples: {test_stats['acc']*100:.3f}", 'cyan'))
+        
+        if args.output_dir and args.save_ckpt:
+            val_acc = test_stats['acc']
+            is_val_acc_updated = (val_acc > max_val_acc)
+            max_val_acc = max(val_acc, max_val_acc)
+
+            # if is_val_loss_updated or (epoch + 1) % args.save_freq == 0 or epoch + 1 == args.epochs:
+            if is_val_acc_updated or (epoch + 1) % args.save_freq == 0:
+                utils.save_model(
+                    args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
+                    loss_scaler=loss_scaler, epoch=epoch, model_ema=None)
        
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))

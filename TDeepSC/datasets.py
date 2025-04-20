@@ -140,7 +140,7 @@ def collate_fn(batch):
     for sample in batch:
         text = " ".join(sample[0][3])
         encoded_bert_sent = bert_tokenizer.encode_plus(
-            text, max_length=SENT_LEN+2, add_special_tokens=True, pad_to_max_length=True,truncation=True)
+            text, max_length=SENT_LEN+2, add_special_tokens=True, padding='max_length',truncation=True)
         bert_details.append(encoded_bert_sent)
 
     bert_sentences = torch.LongTensor([sample["input_ids"] for sample in bert_details])

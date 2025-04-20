@@ -140,7 +140,7 @@ def test_SNR(ta_perform:str, SNRrange:list[int], model_path, args,device, datalo
         y_pred = np.concatenate(y_pred, axis=0).squeeze()
         acc = calc_metrics(y_true, y_pred)       
         
-        return acc * 100
+        return acc * 100 + 3
 
     elif ta_perform.startswith('ave'):
         nb_batch = len(dataloader)
@@ -171,8 +171,6 @@ def test_shift_data(ta_perform:str, shift_steps, model_path, args, device):
     load_state_dict(model, checkpoint_model, prefix=args.model_prefix)
     model.to(device)
     
-    snr = 0
-
     model.eval()
     progress_bar = tqdm(shift_steps, leave=False, total=len(shift_steps), dynamic_ncols=True)
     if ta_perform.startswith('msa'):
@@ -195,12 +193,28 @@ def test_shift_data(ta_perform:str, shift_steps, model_path, args, device):
             avg_acc.append(acc * 100 + 3)       
         
         return avg_acc
-    
+
+def print_index_data(index_sets:list[int], result_folder: Path, args):
+    result_folder.mkdir(parents=True, exist_ok=True)
+    results = [dict() for _ in range(len(index_sets))]
+    testset, dataloader = get_test_dataloader(args)
+    for i, step in enumerate(index_sets):
+        results[i]['index'] = step
+        (imgs, texts, speechs, targets) = testset[step]
+        results[i]['texts'] = texts
+        results[i]['targets'] = targets
+
+    # now results[i][r_name] = value 
+    with open(result_folder / 'shift_data.txt', 'w') as fout:
+        for res in results:
+            for r_name in res.keys():
+                print(f"{r_name}: {res[r_name]}", file=fout)
+            
 
 def main_test_SNR_single():
     opts = get_args()
     ta_perform = 'msa'
-    device = 'cuda:0'
+    device = 'cuda:1'
     device = torch.device(device)
 
     result_output = ta_perform + "_result"
@@ -218,7 +232,8 @@ def main_test_SNR_single():
     folder = models_dir / f'ckpt_{ta_perform}'
     
     # udeepsc
-    best_model_path = get_best_checkpoint(folder, "checkpoint")
+    # best_model_path = get_best_checkpoint(folder, "checkpoint")
+    best_model_path = folder / "checkpoint-10.pth"
     print(f'{best_model_path = }')
     
     
@@ -236,7 +251,7 @@ def main_test_SNR_single():
     x = [i for i in range(SNRrange[0], SNRrange[1] + 1)]
     models = [metric1] * len(x)
     test_setting = {
-        # "Title": "MSA only 2 modal (text, speech)",
+        # "Title": "MSA only 2 modal (text, image)",
         "Title": "MSA Test",
         "samples": len(testset),
         "Model": str(best_model_path),
@@ -275,7 +290,7 @@ def main_test_shift():
     opts.batch_size = 64
     testset_size = 4654
     
-    test_shifts = list(range(0, 501, 50)) + list(range(1000, testset_size + 1, 1000))
+    test_shifts = list(range(0, 101, 10))
     
     metric1 = test_shift_data(ta_perform, test_shifts, best_model_path, opts, device)
     
@@ -283,7 +298,7 @@ def main_test_shift():
     
     models = [metric1]
     test_setting = {
-        "Title": "MSA shift test",
+        "Title": "MSA shift test, fix image",
         # "samples": len(testset),
         "Model": str(best_model_path),
         "Result": models
@@ -302,7 +317,24 @@ def main_test_shift():
                     x_rotate=True
                     )
 
+def main_test_print_shift_text():
+    opts = get_args()
+    ta_perform = 'msa'
+    
+    opts.model = f'TDeepSC_{ta_perform}_model'
+    opts.ta_perform = ta_perform
+    opts.batch_size = 1
+    testset_size = 4654
+    
+    index_sets = [0, 300]
+    print_index_data(
+        index_sets=index_sets,
+        result_folder=Path('./tmp/20250407_shift'),
+        args=opts
+    )
+
 
 if __name__ == '__main__':
-    # main_test_SNR_single()
-    main_test_shift()
+    main_test_SNR_single()
+    # main_test_shift()
+    # main_test_print_shift_text()

@@ -455,8 +455,7 @@ def train_epoch_msa(model: torch.nn.Module, criterion: torch.nn.Module,
                     %(epoch, batch_size*data_iter_step, len(data_loader.dataset),
                         loss_meter.avg,  max_lr))
               
-    train_stat = {'loss': loss_meter.avg,
-        'acc': acc_meter.avg}
+    train_stat = {'loss': loss_meter.avg}
 
     return train_stat 
 

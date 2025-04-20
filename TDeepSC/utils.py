@@ -731,6 +731,215 @@ def compute_acc_AVE(labels, x_labels, nb_batch):
 
     return accuracy_score(real_labels, pre_labels)    
 
+import torch.optim.lr_scheduler as lr_scheduler
+def get_scheduler_str(scheduler: lr_scheduler.LRScheduler) -> str:
+    """
+        Scheduler don't have a __str__ implementation so I asked chatgpt to make one
+        I'm guessing it is doing a bad job so there may be exceptions...
+
+        No LambdaLR, MultiplicativeLR because it's not meaningful to print lambda functions
+    """
+    if isinstance(scheduler, lr_scheduler.StepLR):
+        return f'StepLR(optimizer, step_size={scheduler.step_size}, gamma={scheduler.gamma})'
+    
+    elif isinstance(scheduler, lr_scheduler.MultiStepLR):
+        return f'MultiStepLR(optimizer, milestones={scheduler.milestones}, gamma={scheduler.gamma})'
+    
+    elif isinstance(scheduler, lr_scheduler.ConstantLR):
+        return f'ConstantLR(optimizer, factor={scheduler.factor}, total_iters={scheduler.total_iters})'
+    
+    elif isinstance(scheduler, lr_scheduler.LinearLR):
+        return f'LinearLR(optimizer, start_factor={scheduler.start_factor}, end_factor={scheduler.end_factor}, total_iters={scheduler.total_iters})'
+    
+    elif isinstance(scheduler, lr_scheduler.ExponentialLR):
+        return f'ExponentialLR(optimizer, gamma={scheduler.gamma})'
+    
+    elif isinstance(scheduler, lr_scheduler.PolynomialLR):
+        return f'PolynomialLR(optimizer, power={scheduler.power}, total_iters={scheduler.total_iters})'
+    
+    elif isinstance(scheduler, lr_scheduler.CosineAnnealingLR):
+        return f'CosineAnnealingLR(optimizer, T_max={scheduler.T_max}, eta_min={scheduler.eta_min})'
+    
+    elif isinstance(scheduler, lr_scheduler.ChainedScheduler):
+        return f'ChainedScheduler(schedulers={[get_scheduler_str(s) for s in scheduler._schedulers]})'
+    
+    elif isinstance(scheduler, lr_scheduler.SequentialLR):
+        return f'SequentialLR(optimizer, schedulers={[get_scheduler_str(s) for s in scheduler._schedulers]}, milestones={scheduler._milestones})'
+    
+    elif isinstance(scheduler, lr_scheduler.ReduceLROnPlateau):
+        return (f'ReduceLROnPlateau(optimizer, mode={scheduler.mode}, factor={scheduler.factor}, '
+                f'patience={scheduler.patience}, threshold={scheduler.threshold}, threshold_mode={scheduler.threshold_mode})')
+    
+    elif isinstance(scheduler, lr_scheduler.CyclicLR):
+        return (f'CyclicLR(optimizer, base_lr={scheduler.base_lr}, max_lr={scheduler.max_lr}, '
+                f'total_size={scheduler.total_size}, step_ratio={scheduler.step_ratio})')
+    
+    elif isinstance(scheduler, lr_scheduler.OneCycleLR):
+        return (f'OneCycleLR(optimizer, _schedule_phases={scheduler._schedule_phases}, total_steps={scheduler.total_steps}, '
+                f'epochs={scheduler.epochs})')
+    
+    elif isinstance(scheduler, lr_scheduler.CosineAnnealingWarmRestarts):
+        return (f'CosineAnnealingWarmRestarts(optimizer, T_0={scheduler.T_0}, T_mult={scheduler.T_mult}, '
+                f'eta_min={scheduler.eta_min})')
+    return str(scheduler)
+
+def str_type_indent(obj, iter_limit_items: int = 10, dict_limit_items: int = 1000000, array_limit_items: int = -1,
+                    explicit_type: bool=False, indent="    ") -> str:
+    """
+        ref. str_type
+    """
+    def str_indent(s, indent: str):
+        """
+            to indent a whole multiline block
+            s: the multiline block
+        """
+        return '\n'.join([f'{indent}{line}' for line in s.split('\n')])
+
+    # ---
+
+    def str_str(obj: str):
+        return f'"{obj}"'
+    
+    def str_direct(obj):
+        "for simple things that doesn't need the type to show, e.g., python's int, float, None"
+        return f'{obj}'
+
+    def str_object(obj: object):
+        "default case, for anything that is not listed below, including np.float32 or something like that"
+        return f'{str(obj.__class__)[8:-2]}({obj})'
+    
+    def str_iterable_inner(obj: Iterable, limit=iter_limit_items, is_obj_str_list: bool = False):
+        """
+            used when you wanna iterate something, it deals with the indentation and limit
+
+            f"List[len=4]({str_iterable_inner([1, 2, 3, [4, 5]])})"
+            -> List[len=4](
+                   1, 
+                   2, 
+                   3, 
+                   List[len=2](4, 5)
+               )
+            
+            Args:
+                limit: the maximum number of items to show, the rest would be shown as "... (%d more)"
+                is_obj_str_list: whether the object is a list of object strings (objects that is already "dfs()"ed)
+                                if so, won't dfs again
+                                used when you have special stringify function for the iterated object,
+                                e.g., dict
+        """
+        if is_obj_str_list:
+            s_ls = obj
+        else:
+            # stringify the iterated object
+            # the if-else is to prevent dfs()ing the object over the limit count
+            # since we won't see them in the result anyway
+            s_ls = [dfs(o) if _ < limit else None for _, o in enumerate(obj)]
+            
+        if len(s_ls) == 0:
+            # just don't do intent at all
+            s = f""
+        else:
+            if len(s_ls) > limit:
+                # limit the items
+                s_ls = s_ls[:limit] + [f'...({len(s_ls) - limit} more)']
+            
+            if all([type_map.get(o.__class__, None) == str_direct for _, o in zip(range(limit), obj)]):
+                # if all items are direct, don't do indentation
+                s = ", ".join(s_ls)
+            else:
+                # do indentation
+                inner = ", \n".join(s_ls)
+                s = f"\n{str_indent(inner, indent)}\n"
+        return s
+    
+    def str_iterable(obj: Iterable):
+        "for default iterables that i don't really know the type of"
+        s_ls = [dfs(o) for o in obj]
+        s = f"{str(obj.__class__)[8:-2]}[len={len(s_ls)}]({str_iterable_inner(obj)})"
+        return s
+    
+    def str_list(obj: list):
+        return f'List[len={len(obj)}]({str_iterable_inner(obj)})'
+    
+    def str_tuple(obj: tuple):
+        return f'Tuple[len={len(obj)}]({str_iterable_inner(obj)})'
+    
+    def str_tensor(obj: torch.Tensor):
+        if obj.nelement() <= array_limit_items:
+            return f'torch.Tensor[size={list(obj.size())}, dtype={obj.dtype}, dev={obj.device}](\n{str_indent(str(obj), indent)}\n)'
+        return f'torch.Tensor[size={list(obj.size())}, dtype={obj.dtype}, dev={obj.device}]()'
+    
+    def str_np_ndarray(obj: np.ndarray):
+        if obj.size <= array_limit_items:
+            return f'np.ndarray[shape={list(obj.shape)}, dtype={obj.dtype}](\n{str_indent(str(obj), indent)}\n)'
+        return f'np.ndarray[shape={list(obj.shape)}, dtype={obj.dtype}]()'
+    
+    def str_set(obj: set):
+        return f'Set[len={len(obj)}]({str_iterable_inner(obj)})'
+    
+    def str_dict(obj: set):
+        s_ls = [f'{dfs(key)}: {dfs(value)}' for key, value in obj.items()]
+        s = f'Dict[len={len(s_ls)}]({str_iterable_inner(s_ls, dict_limit_items, True)})'
+        return s
+    
+    if explicit_type:
+        # make simple types also show the type
+        str_direct = str_object
+
+    type_map = {
+        list: str_list,
+        tuple: str_tuple,
+        torch.Tensor: str_tensor,
+        np.ndarray: str_np_ndarray,
+        set: str_set,
+        dict: str_dict,
+        str: str_str,
+        int: str_direct,
+        float: str_direct,
+        None.__class__: str_direct,
+        torch.utils.data.DataLoader: str_direct,
+        torch.utils.data.Dataset: str_direct,
+        torch.optim.lr_scheduler.LRScheduler: get_scheduler_str,
+        Iterable: str_iterable,
+    }
+
+    def dfs(obj: object):
+        for tp, str_fn in type_map.items():
+            if isinstance(obj, tp):
+                return str_fn(obj)
+        return str_object(obj)
+
+    return dfs(obj)
+
+def str_type(obj, iter_limit_items: int = 10, dict_limit_items: int = 1000000, array_limit_items: int = -1,
+             explicit_type: bool=False, indent: int | str | None = None):
+    """
+        Actually dump everything about... a thing.
+        can handle list and tensors and all kinds of stuff.
+        useful when you don't know what a thing is and don't wanna just print()
+        and see a bunch of tensor values, such as the output of dataloader...
+
+        Args:
+            obj: the object to be dumped
+            iter_limit_items: the maximum number of items to show in an iterable (other than dict)
+                              if the size of the iter is larger than this, will only print up to this amount of items
+                              and skip the rest by adding '... (%d more)' at the end
+            dict_limit_items: the maximum number of items to show in a dict
+            array_limit_items: the maximum number of items to show in an array-like object (i.e., tensor, np.ndarray)
+                               if the size of the array is larger than this, no content would be printed
+            explicit_type: whether to show the type of simple objects (e.g., int, float, None)
+            indent: the indentation of the string. 
+                    if int, it will be the number of spaces to indent
+                    if str, it will be the string to indent
+                    if None, the string will be returned without newlines
+    """
+    if indent is None:
+        return str_type_indent(obj, iter_limit_items, dict_limit_items, array_limit_items, explicit_type, '').replace('\n', '')
+    elif isinstance(indent, int):
+        return str_type_indent(obj, iter_limit_items, dict_limit_items, array_limit_items, explicit_type, ' ' * indent)
+    else:
+        return str_type_indent(obj, iter_limit_items, dict_limit_items, array_limit_items, explicit_type, str(indent))
+
 class DiffPruningLoss(torch.nn.Module):
     def __init__(self, base_criterion: torch.nn.Module, dynamic=True, ratio_weight=2.0, main_weight=1.):
         super().__init__()
