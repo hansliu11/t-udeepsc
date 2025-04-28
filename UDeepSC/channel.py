@@ -209,9 +209,7 @@ def power_norm_batchwise(signal: torch.Tensor, power:float=1.0):
                 power_constraint: integer
             Returns:
                 The same as signal, but power normalized.
-            
-            NOTE: 
-                MUST USE ON REAL TENSOR!!!!!! it can't handle complex tensor
+        
     """
     signal_shape = signal.shape
     dim = tuple(signal.size()[1:-1])
@@ -266,10 +264,6 @@ def power_normlize_superimposed(signal: torch.Tensor, power_constraint_per_compl
 
 def signal_power(signal: torch.Tensor):
     """
-        Calculate the power of the signal, this works for both real and complex signal.
-        i.e., the signal is of shape (*batch_size, signal_length) where signal_length is even
-        and the last dimension is the complex signal
-
         Args:
             signal: real or complex tensor of shape (*batch_size, signal_length)
         Returns:
@@ -304,7 +298,7 @@ class AWGNSingleChannel(SingleChannel):
                 the complex noise that can be applied onto it
         '''
         device = Tx_sig.device
-        signal_power = torch.mean(Tx_sig.abs()**2, dim=-1, keepdim=True)
+        signal_power = torch.mean(Tx_sig.abs().detach()**2, dim=-1, keepdim=True)
         snr_linear = 10 ** (SNRdb / 10.0)
         sigma2 = signal_power / snr_linear # calculate noise power based on signal power and SNR
         if ouput_power:
@@ -351,8 +345,7 @@ class RayleighFadingSingleChannel(SingleChannel):
                         will treat the last dimension as one signal (i.e., a list of complex numbers)
             Return:
                 the signal with interference
-                if self.divide_gain, the return signal will be divided by channel gain,
-                this is used when you can know the channel gain on the receiver side
+                if self.divide_gain, the return signal will be divided by channel gain
         """
         # channel_gain = CN(0, channel_gain_var)
         channel_gain = RayleighFadingSingleChannel.make_channel_gain_from_var(signal, channel_gain_var)
