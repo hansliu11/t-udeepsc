@@ -234,7 +234,7 @@ def power_norm_batchwise(signal: torch.Tensor, power:float=1.0):
     
     return signal, power
 
-def power_normlize_superimposed(signal: torch.Tensor, power_constraint_per_complex_symbol:torch.FloatTensor=torch.FloatTensor([1])):
+def power_normlize_stack(signal: torch.Tensor, power_constraint_per_complex_symbol: torch.FloatTensor=torch.FloatTensor([1])):
     """
             For signal that stack before normalized
             Args:
@@ -460,8 +460,8 @@ class FadingMultiChannel():
         """
             Args:
                 signal: a complex tensor representing the signals from multiple transmitter (user).
-                        with shape (*dim1, transmitter_dim = n_tx, *dim2, symbol_dim):
-                        - transmitter_dim: for transmitters, indexed by user_dim_index
+                        with shape (*dim1, n_tx, *dim2, symbol_dim):
+                        - n_tx: for transmitters, indexed by user_dim_index
                         - symbol_dim: for signal symbols
                 user_dim_index: the index of transmitter_dim in the signal tensor
                 noise_tensor: the noise tensor to be used in the interference,
@@ -563,10 +563,105 @@ class FadingMultiChannel():
 class RayleighFadingMultiChannel(FadingMultiChannel):
     """
         Rayleigh channel implementation
-        h^k_{t, r} (C^{1x1}) ~ CN(0, channel_gain_var)
+        h^k_{t, r} (C^{1x1}) = path_loss_factor_{r, t} * CN(0, channel_gain_var)
+        where:
+            path_loss_factor_{r, t}: the path loss factor between Transmitter t and Receiver r
+                        - in U-DeepSC with SIC, this is sqrt(PL(d^s_i)
+                        - in U-DeepSC, this is 1
     """
+    def __init__(self, 
+                 noise_power_density_dBm: torch.Tensor | float, 
+                 reference_distance: float,
+                 reference_path_loss: float,
+                 path_loss_exponent: float,
+                 distance: torch.Tensor | float
+                 ):
+        """
+            Args:
+                For the below arguments, if specified as `torch.Tensor | type`,
+                it means you can specify each element by giving a tensor or fill every element with the same number.
+
+                noise_power_density_dBm (torch.Tensor | float):
+                    The power density N_0 of the noise, in dBm. a float tensor with shape (n_rx,)
+                reference_distance (float): 
+                    The reference distance of the reference path loss d_0
+                reference_path_loss (float): 
+                    The reference path loss \rho_0, equals PL(d_0) by definition
+                path_loss_exponent (float): 
+                    the exponent for the path loss distance ratio l.
+                distance (torch.Tensor | float): 
+                    the distance of each transmitter-receiver pair. a float tensor with shape (n_tx, n_rx)
+                    unit same as reference_distance
+        """
+        def fill_default_value(name, value, size):
+            if isinstance(value, torch.Tensor):
+                if value.size() != size:
+                    raise Exception(f'{name}: size {value.size() = } invalid (desired size = {size})')
+                return value.clone().detach().to('cpu')
+            return torch.full(size, value)
+        
+        self.n_rx = 1
+        self.noise_power_density_dBm = fill_default_value('noise_power_density_dBm', noise_power_density_dBm, (self.n_rx,))
+        # self.channel_gain_var = fill_default_value('channel_gain_var', channel_gain_var, (n_tx, n_rx))
+        self.reference_distance = reference_distance
+        self.reference_path_loss = reference_path_loss
+        self.distance = distance
+        self.path_loss_exponent = path_loss_exponent
+
+    def get_signal_power_constraint(self, signal: torch.Tensor, SNRdB: torch.Tensor, user_dim_index: int, channel_gain_var: list[list[float]] | torch.Tensor = None)-> torch.Tensor:
+        '''
+            Get signal power constraint given SNRdB and noise power
+            Final transmitted signal power = P_i * |h_i|^2 = SNR * noise power
+             
+            Args:
+                signal: a complex tensor representing the signals from multiple transmitter (user).
+                SNRdB: the SNR in dB
+                user_dim_index: the index of transmitter_dim in the signal tensor
+            
+            Return:
+                The power constraint for each transmitter will have dimension (n_tx, )
+        '''
+        
+        # SNRdB = torch.tensor(SNRdB)
+
+        dim1 = tuple(signal.size()[:user_dim_index])
+        dim2 = tuple(signal.size()[user_dim_index+1:-1])
+        dim1_1 = (0,) * len(dim1)
+        dim2_1 = (0,) * len(dim2)
+
+        # Convert noise power from dBm to watts
+        noise_power_density = 10 ** (self.noise_power_density_dBm / 10) * 1e-3 
+        
+        snr_linear = 10 ** (SNRdB / 10.0)
+
+        # Get signal power with channel gain from noise power and SNR
+        signal_power_with_h = (snr_linear * noise_power_density).to(signal.device)
+        channel_gain = self._make_channel_gain(signal, user_dim_index, channel_gain_var).to(signal.device)
+
+        # save channel gain for later use
+        self.channel_gain = channel_gain.clone().detach().to('cpu')
+
+        # channel gain: (*dim1, transmitter_dim, receiver_dim, *dim2, symbol_dim)
+        # reduce channel gain dimension to (n_tx, n_rx)
+        index = (
+            *dim1_1,            # dim1 singleton indices
+            slice(None),        # :
+            slice(None),        # :
+            *dim2_1,            # dim2 singleton indices
+            0                   # symbol dim
+        )
+        reduced_channel_gain = channel_gain[index]
+        
+        # make signal power constraint from channel gain
+        h2 = reduced_channel_gain.abs().detach() ** 2
+        power_constraint = signal_power_with_h / h2
+        power_constraint = power_constraint.view(self.n_tx,)
+
+        return power_constraint
+
     def _make_channel_gain(self, signal: torch.Tensor, user_dim_index: int, channel_gain_var: list[list[float]] | torch.Tensor = None) -> torch.Tensor:
         # slow fading -> all symbol use same channel gain
+        self.n_tx = signal.size()[user_dim_index]
         dim1 = tuple(signal.size()[:user_dim_index])
         dim2 = tuple(signal.size()[user_dim_index+1:-1])
         symbol_dim = signal.size()[-1]
@@ -575,31 +670,57 @@ class RayleighFadingMultiChannel(FadingMultiChannel):
 
         # make channel gain by expanding the given gain variance in user dimension
         # channel gain: (*dim1, transmitter_dim, receiver_dim, *dim2, symbol_dim)
-        cg_dim = channel_gain_var.size()
+        channel_gain_var = torch.tensor(channel_gain_var)
+        cg_dim = channel_gain_var.size()  # (n_tx, n_rx)
         channel_gain_var = channel_gain_var.clone().detach().to(signal.device)
         channel_gain_var = channel_gain_var.view(*dim1_1, *cg_dim, *dim2_1, 1)
         channel_gain_var = channel_gain_var.expand(*dim1, *cg_dim, *dim2, 1)
         
         # make channel gain and then expand symbol_dim to make each symbol have the same channel gain
-        channel_gain = RayleighFadingSingleChannel.make_channel_gain_from_var_tensor(channel_gain_var)
-        channel_gain = channel_gain.expand(*dim1, *cg_dim, *dim2, symbol_dim)
+        NLOS_channel_gain = RayleighFadingSingleChannel.make_channel_gain_from_var_tensor(channel_gain_var)
+        NLOS_channel_gain = NLOS_channel_gain.expand(*dim1, *cg_dim, *dim2, symbol_dim)
+
+        # make path loss factor sqrt(PL(d_i))
+        path_loss_factor = torch.sqrt(
+            self.reference_path_loss * torch.pow(self.distance / self.reference_distance, -self.path_loss_exponent)
+        ).to(signal.device)
+        path_loss_factor = path_loss_factor.view(*dim1_1, self.n_tx, self.n_rx, *dim2_1, 1)
+        path_loss_factor = path_loss_factor.expand(*dim1, self.n_tx, self.n_rx, *dim2, symbol_dim)
+
+        # combine all together
+        channel_gain = path_loss_factor * NLOS_channel_gain
         
         return channel_gain
     
-    def _make_noise(self, signal: torch.Tensor, user_dim_index: int, SNRdb: float | torch.Tensor) -> torch.Tensor:
-        if torch.is_tensor(SNRdb):
-            dim1 = tuple(signal.size()[:user_dim_index])
-            dim2 = tuple(signal.size()[user_dim_index+1:-1])
-            symbol_dim = signal.size()[-1]
-            dim1_1 = (1,) * len(dim1)
-            dim2_1 = (1,) * len(dim2)
+    def _make_noise(self, signal: torch.Tensor, user_dim_index: int, SNRdb: list[float] | torch.Tensor) -> torch.Tensor:
+        if not torch.is_tensor(SNRdb):
+            SNRdb = torch.Tensor(SNRdb)
 
-            snr_dim = SNRdb.size()    # == (n_rx,)
-            snr_db = SNRdb.clone().detach().to(signal.device)
-            snr_db = snr_db.view(*dim1_1, *snr_dim, *dim2_1, 1)
-            snr_db = snr_db.expand(*dim1, *snr_dim, *dim2, symbol_dim)
+        dim1 = tuple(signal.size()[:user_dim_index])
+        dim2 = tuple(signal.size()[user_dim_index+1:-1])
+        symbol_dim = signal.size()[-1]
+        dim1_1 = (1,) * len(dim1)
+        dim2_1 = (1,) * len(dim2)
 
-        return AWGNSingleChannel.make_awgn_noise(signal, SNRdb)
+        # Convert noise power from dBm to watts
+        noise_power_density = 10 ** (self.noise_power_density_dBm / 10) * 1e-3  
+
+        # convert it to the same size as signal
+        noise_power_density = noise_power_density.view(*dim1_1, self.n_rx, *dim2_1, 1)
+        noise_power_density = noise_power_density.expand(*dim1, self.n_rx, *dim2, symbol_dim)
+
+        # Generate complex Gaussian noise: CN(0, sigma^2 * I)
+        noise_real = torch.randn_like(noise_power_density) * torch.sqrt(noise_power_density / 2)
+        noise_imag = torch.randn_like(noise_power_density) * torch.sqrt(noise_power_density / 2)
+        noise = torch.complex(noise_real, noise_imag)
+
+        # snr_dim = SNRdb.size()    # == (n_rx,)
+        # snr_db = SNRdb.clone().detach().to(signal.device)
+        # snr_db = snr_db.view(*dim1_1, *snr_dim, *dim2_1, 1)
+        # snr_db = snr_db.expand(*dim1, *snr_dim, *dim2, symbol_dim)
+        # noise = AWGNSingleChannel.make_awgn_noise(signal, SNRdb)
+
+        return noise
 
 
 def test_channel_class():

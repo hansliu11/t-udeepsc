@@ -886,7 +886,7 @@ class UDeepSC_M3(nn.Module):
             x_spe = self.msa_spe_channel_to_decoder(x_spe)
             
             x = torch.cat([x_img,x_text,x_spe], dim=1)
-            # x = torch.cat([x_spe], dim=1)
+            # x = torch.cat([x_img, x_spe], dim=1)
             # print(x.shape) # (batch_size, 3, 128)
         elif ta_perform.startswith('ave'):
             x_img = self.ave_img_channel_decoder(x_img)
@@ -922,14 +922,26 @@ class UDeepSC_M3(nn.Module):
             return x
 
 class UDeepSC_M3_withSIC(UDeepSC_M3):
-    def __init__(self, *args, **kwargs):
+    def __init__(self,
+                noise_power_density_dBm,
+                reference_distance,
+                reference_path_loss,
+                path_loss_exponent,
+                distance,
+                *args, **kwargs):
 
         super().__init__(*args, **kwargs)
         # self.channel = Channels()
-        self.channel = AWGNMultiChannel()
-        # self.channel = RayleighFadingMultiChannel()
+        # self.channel = AWGNMultiChannel()
+        self.channel = RayleighFadingMultiChannel(
+                            noise_power_density_dBm,
+                            reference_distance,
+                            reference_path_loss,
+                            path_loss_exponent,
+                            distance,
+                        )
 
-    def SIC(self, signal: torch.Tensor, user_dim_index: int, power_constraints: list[float], 
+    def SIC(self, signal: torch.Tensor, user_dim_index: int, power_constraints: torch.FloatTensor, 
             channel_encoders: list[nn.Module], channel_decoders: list[nn.Module], 
             channel_type: Literal['AWGN', 'Fading'], h=None):
         """            
@@ -955,13 +967,13 @@ class UDeepSC_M3_withSIC(UDeepSC_M3):
         
         if channel_type == "AWGN":
             # Sort users by transmit power (descending order)
-            user_indices = np.argsort(power_constraints)[::-1]
+            user_indices = torch.argsort(power_constraints, dim=-1).detach().to('cpu').numpy()
         else: # Rayleigh or Rician
             if h is None:
                 raise ValueError("Channel gains (h) must be provided for Rayleigh channel.")
             # Compute effective received power |h_i|^2 * P_i
-            effective_power = torch.abs(h)**2 * power_constraints
-            user_indices = np.argsort(effective_power)[::-1]
+            # effective_power = torch.abs(h).detach()**2 * power_constraints
+            user_indices = torch.argsort(power_constraints, dim=-1).detach().to('cpu').numpy()
 
 
         # decoded_signals = torch.zeros((batch_size, num_users, *dim)).to(device)
@@ -977,25 +989,28 @@ class UDeepSC_M3_withSIC(UDeepSC_M3):
                     
                     3. Subtract encoded estimated signal from Y
                     
-                    4. Repeat until all signal been detected
+                    4. Repeat until all signals be detected
             """
             estimated = signal[:, 0, :]
 
             if channel_type == "Fading":
-                estimated = estimated / h[i]
+                estimated = estimated / h[:, i, 0]
+                estimated = tensor_complex2real(estimated, 'concat')
+
             estimated = channel_decoders[i](estimated)
-            # print(estimated.shape)
             decoded_signals[i] = estimated
             
             with torch.no_grad():
                 estimated = channel_encoders[i](estimated)
 
-            estimated_norm, _ = power_norm_batchwise(estimated, power_constraints[i])
+            estimated_norm, _ = power_norm_batchwise(estimated, power_constraints[i].item())
 
             if channel_type == "AWGN":
                 signal = signal - estimated_norm
             else: # Fading channel (Rayleigh or Rician)
-                signal = signal - h[i] * estimated_norm
+                # print(f'{estimated_norm.shape=}')
+                estimated_norm = tensor_real2complex(estimated_norm, 'concat')
+                signal = signal - h[:, i, 0] * estimated_norm
 
         return decoded_signals
         
@@ -1012,21 +1027,37 @@ class UDeepSC_M3_withSIC(UDeepSC_M3):
                 a list of decode signals in order (text, img, (speech))
         """
         # print(f"Transmid Signal Dim = {signal.shape}")
-        signal = tensor_real2complex(signal, 'concat')
         
-        # superimpose and add noise
-        signal = self.channel.interfere(signal, SNRdb.item(), user_dim_index)
-        # signal = self.channel.interfere(
-        #     signal=signal, 
-        #     user_dim_index=user_dim_index, 
-        #     SNRdb=SNRdb.item(), 
-        #     channel_gain_var=self.channel_gain_var
-        # )
-        # channel_gain = self.channel.get_channel_gain().to(signal.device)
-        # print(f'{channel_gain.shape= }')
-        signal = tensor_complex2real(signal, 'concat')
+        if isinstance(self.channel, AWGNMultiChannel):
+            power_constraints = torch.tensor(power_constraints)
+            signal = power_normlize_stack(signal, power_constraints)
+            signal = tensor_real2complex(signal, 'concat') #(batch_size, 1, 8)
+            
+            # superimpose and add noise
+            signal = self.channel.interfere(signal, SNRdb.item(), user_dim_index)
 
-        outputs = self.SIC(signal, user_dim_index, power_constraints, channel_encoders, channel_decoders, 'AWGN')
+            signal = tensor_complex2real(signal, 'concat')
+            outputs = self.SIC(signal, user_dim_index, power_constraints, channel_encoders, channel_decoders, 'AWGN')
+
+        elif isinstance(self.channel, RayleighFadingMultiChannel):
+            signal = tensor_real2complex(signal, 'concat')
+            power_constraints = self.channel.get_signal_power_constraint(signal, SNRdb, user_dim_index, self.channel_gain_var) # (n_tx, )
+            signal = power_normlize_stack(signal, power_constraints)
+
+            self.channel_gain = self.channel.get_channel_gain().to(signal.device) # (batch_size, n_tx, 1, 1 ,signal length)
+            # print(f'{self.channel_gain.shape= }')
+            # superimpose and add noise
+            signal = self.channel.interfere(
+                signal=signal, 
+                user_dim_index=user_dim_index, 
+                SNRdb=SNRdb, 
+                channel_gain_var=self.channel_gain_var,
+                channel_gain_tensor=self.channel_gain
+            )
+        
+            outputs = self.SIC(signal, user_dim_index, power_constraints, channel_encoders, channel_decoders, 'Fading', self.channel_gain)
+
+            # signal = tensor_complex2real(signal, 'concat')
 
         return outputs
     
@@ -1166,7 +1197,6 @@ class UDeepSC_M3_withSIC(UDeepSC_M3):
         else:
             noise_std = torch.FloatTensor([1]) * 10**(-test_snr/20) 
             noise_snr = test_snr
-            # print(f"SNR: {noise_snr}")
         if isinstance(self.channel, RayleighFadingMultiChannel):
             self.channel_gain_var = [[1.0]] * n_user if channel_gain_var is None else channel_gain_var
 
@@ -1185,7 +1215,7 @@ class UDeepSC_M3_withSIC(UDeepSC_M3):
                 x_text = x_text[:,-2:-1,:]
                 x_text = self.msa_text_encoder_to_channel(x_text)
 
-            x_text, _ = power_norm_batchwise(x_text, power)
+            # x_text, _ = power_norm_batchwise(x_text, power)
             
         if img is not None:
             AVE_batch_size = img.shape[0]
@@ -1204,7 +1234,7 @@ class UDeepSC_M3_withSIC(UDeepSC_M3):
                 x_img = self.vqa_img_encoder_to_channel(x_img)
                 
             elif ta_perform.startswith('msa'):
-                power = power_constraint[1]
+                power = power_constraint[0]
                 x_img = x_img[:,0,:].unsqueeze(1)
                 x_img = self.msa_img_encoder_to_channel(x_img)
 
@@ -1213,7 +1243,7 @@ class UDeepSC_M3_withSIC(UDeepSC_M3):
                 x_img = x_img[:,0,:].unsqueeze(1)
                 x_img = self.ave_img_encoder_to_channel(x_img)
 
-            x_img, _ = power_norm_batchwise(x_img, power)
+            # x_img, _ = power_norm_batchwise(x_img, power)
 
         if speech is not None:
             if ta_perform.startswith('ave'):
@@ -1221,7 +1251,7 @@ class UDeepSC_M3_withSIC(UDeepSC_M3):
 
             x_spe = self.spe_encoder(speech, ta_perform)
             if ta_perform.startswith('msa'):
-                power = power_constraint[2]
+                power = power_constraint[1]
                 x_spe = x_spe[:,0,:].unsqueeze(1)
                 x_spe = self.msa_spe_encoder_to_channel(x_spe)
             
@@ -1230,7 +1260,7 @@ class UDeepSC_M3_withSIC(UDeepSC_M3):
                 x_spe = x_spe[:,0,:].unsqueeze(1)
                 x_spe = self.ave_spe_encoder_to_channel(x_spe)
             
-            x_spe, _ = power_norm_batchwise(x_spe, power)
+            # x_spe, _ = power_norm_batchwise(x_spe, power)
 
         if img2 is not None:
             if ta_perform.startswith('ave'):
@@ -1262,9 +1292,9 @@ class UDeepSC_M3_withSIC(UDeepSC_M3):
             channel_encoders = [self.msa_text_encoder_to_channel, self.msa_img_encoder_to_channel, self.msa_spe_encoder_to_channel]
             channel_decoders = [self.msa_text_channel_decoder, self.msa_img_channel_decoder, self.msa_spe_channel_decoder]
             # x = torch.stack((x_img, x_spe), dim=1)
-            # x = x_spe.unsqueeze(1)
-            # channel_encoders = [self.msa_spe_encoder_to_channel]
-            # channel_decoders = [self.msa_spe_channel_decoder]
+            # x = x_img.unsqueeze(1)
+            # channel_encoders = [self.msa_img_encoder_to_channel, self.msa_spe_encoder_to_channel]
+            # channel_decoders = [self.msa_img_channel_decoder, self.msa_spe_channel_decoder]
             Rx_sigs = self.transmit(x, 1, noise_snr, power_constraint, channel_encoders, channel_decoders)
 
         elif ta_perform.startswith('ave'):
@@ -1297,7 +1327,7 @@ class UDeepSC_M3_withSIC(UDeepSC_M3):
             x_spe = Rx_sigs[2]
             x_spe = self.msa_spe_channel_to_decoder(x_spe)
             
-            # x = torch.cat([x_spe], dim=1)
+            # x = torch.cat([x_img, x_spe], dim=1)
             x = torch.cat([x_img, x_text, x_spe], dim=1)
             # print(x.shape) # (batch_size, 3, 128)
 
@@ -1811,12 +1841,18 @@ class UDeepSCUplinkNOMAwithSIC(nn.Module):
                 x = self.sigmoid_layer(x)
             return x
 
-class UDeepSCUplinkNOMA(nn.Module):
+class UDeepSCUplinkNOMAnoSIC(nn.Module):
     """
         UDeepSC non-orthogonal version without signal detection
         (signals are superimposed)
     """
-    def __init__(self,mode='tiny',
+    def __init__(self,
+                noise_power_density_dBm,
+                reference_distance,
+                reference_path_loss,
+                path_loss_exponent,
+                distance,
+                 mode='tiny',
                  img_size=224, patch_size=16, encoder_in_chans=3, encoder_num_classes=0, 
                  img_embed_dim=384, text_embed_dim=384, speech_embed_dim=128, img_encoder_depth=4, 
                  text_encoder_depth=4, speech_encoder_depth=4, encoder_num_heads=12, decoder_num_classes=768, 
@@ -1913,8 +1949,14 @@ class UDeepSCUplinkNOMA(nn.Module):
                                 num_heads=decoder_num_heads, dff=mlp_ratio*decoder_embed_dim, 
                                 drop_rate=drop_rate)
         # self.channel = Channels()
-        self.channel = AWGNMultiChannel()
-        # self.channel = RayleighFadingMultiChannel()
+        # self.channel = AWGNMultiChannel()
+        self.channel = RayleighFadingMultiChannel(
+                            noise_power_density_dBm,
+                            reference_distance,
+                            reference_path_loss,
+                            path_loss_exponent,
+                            distance,
+                        )
         self.sigmoid_layer = nn.Sigmoid()
         
     def _init_weights(self, m):
@@ -1941,18 +1983,31 @@ class UDeepSCUplinkNOMA(nn.Module):
                 will have dimension (batch_size, user_dim, *dim, symbol_dim)
         """
         # print(f"Transmitted Signal Dim = {signal.shape}")
-        # power_constraint = torch.tensor(power_constraint)
-        # signal = power_normlize_superimposed(signal, power_constraint)
-        signal = tensor_real2complex(signal, 'concat')
-        
-        # superimpose and add noise
-        signal = self.channel.interfere(signal, SNRdb.item(), user_dim_index)
-        # signal = self.channel.interfere(
-        #     signal=signal, 
-        #     user_dim_index=user_dim_index, 
-        #     SNRdb=SNRdb.item(),
-        #     channel_gain_var=self.channel_gain_var
-        # )
+
+        if isinstance(self.channel, AWGNMultiChannel):
+            power_constraint = torch.tensor(power_constraint)
+            signal = power_normlize_stack(signal, power_constraint)
+            signal = tensor_real2complex(signal, 'concat') #(batch_size, 1, 8)
+            
+            # superimpose and add noise
+            signal = self.channel.interfere(signal, SNRdb.item(), user_dim_index)
+
+        elif isinstance(self.channel, RayleighFadingMultiChannel):
+            signal = tensor_real2complex(signal, 'concat')
+            power_constraint = self.channel.get_signal_power_constraint(signal, SNRdb, user_dim_index, self.channel_gain_var) # (n_tx, )
+            signal = power_normlize_stack(signal, power_constraint)
+
+            self.channel_gain = self.channel.get_channel_gain().to(signal.device) # (batch_size, n_tx, 1, 1 ,signal length)
+            # print(f'{self.channel_gain.shape= }')
+            # superimpose and add noise
+            signal = self.channel.interfere(
+                signal=signal, 
+                user_dim_index=user_dim_index, 
+                SNRdb=SNRdb, 
+                channel_gain_var=self.channel_gain_var,
+                channel_gain_tensor=self.channel_gain
+            )
+
         signal = tensor_complex2real(signal, 'concat')
 
         return signal
@@ -2119,7 +2174,7 @@ class UDeepSCUplinkNOMA(nn.Module):
                 x_text = x_text[:,-2:-1,:]
                 x_text = self.msa_text_encoder_to_channel(x_text)
 
-            x_text, _ = power_norm_batchwise(x_text, power)
+            # x_text, _ = power_norm_batchwise(x_text, power)
             
         if img is not None:
             AVE_batch_size = img.shape[0]
@@ -2147,7 +2202,7 @@ class UDeepSCUplinkNOMA(nn.Module):
                 x_img = x_img[:,0,:].unsqueeze(1)
                 x_img = self.ave_img_encoder_to_channel(x_img)
 
-            x_img, _ = power_norm_batchwise(x_img, power)
+            # x_img, _ = power_norm_batchwise(x_img, power)
             
         if speech is not None:
             if ta_perform.startswith('ave'):
@@ -2164,7 +2219,7 @@ class UDeepSCUplinkNOMA(nn.Module):
                 x_spe = x_spe[:,0,:].unsqueeze(1)
                 x_spe = self.ave_spe_encoder_to_channel(x_spe)
             
-            x_spe, _ = power_norm_batchwise(x_spe, power)
+            # x_spe, _ = power_norm_batchwise(x_spe, power)
         
         if img2 is not None:
             if ta_perform.startswith('ave'):
@@ -2186,8 +2241,8 @@ class UDeepSCUplinkNOMA(nn.Module):
             x = self.transmit(x, 1, noise_snr, 2)
         elif ta_perform.startswith('msa'):
             x = torch.stack((x_img, x_text, x_spe), dim=1)
-            # x = torch.stack((x_img, x_text), dim=1)
-            # x = x_spe.unsqueeze(1)
+            # x = torch.stack((x_img, x_spe), dim=1)
+            # x = x_img.unsqueeze(1)
             x = self.transmit(x, 1, noise_snr, power_constraint)
 
         elif ta_perform.startswith('ave'):
@@ -2343,6 +2398,11 @@ def UDeepSC_NOMA_model(pretrained=False, **kwargs):
 @register_model
 def UDeepSC_NOMA_new_model(pretrained=False, **kwargs):
     model = UDeepSC_M3_withSIC(
+        noise_power_density_dBm=-90,    # ref. ISSNOMATrainer's note
+        reference_distance=1,
+        reference_path_loss=pow(10, -30/10),
+        path_loss_exponent=4,
+        distance=torch.Tensor([33, 83, 153]).reshape(3, 1),
         mode='small',
         img_size=32,
         patch_size=4,
@@ -2370,7 +2430,12 @@ def UDeepSC_NOMA_new_model(pretrained=False, **kwargs):
 
 @register_model
 def UDeepSC_NOMANoSIC_model(pretrained=False, **kwargs):
-    model = UDeepSCUplinkNOMA(
+    model = UDeepSCUplinkNOMAnoSIC(
+        noise_power_density_dBm=-90,    # ref. ISSNOMATrainer's note
+        reference_distance=1,
+        reference_path_loss=pow(10, -30/10),
+        path_loss_exponent=4,
+        distance=torch.Tensor([33, 83, 153]).reshape(3, 1),
         mode='small',
         img_size=32,
         patch_size=4,

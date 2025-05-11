@@ -98,4 +98,9 @@ def get_args():
 
     parser.add_argument('--textr_euro',action='store_true', help='Use Europarl as textr testing dataset')
 
+    parser.add_argument('--gpu', 
+                        help="The GPU used. Input integer list like \"0\" or \"0,1,2\". Default \"0\".",
+                        type=str,
+                        default="0")
+
     return parser.parse_args()
