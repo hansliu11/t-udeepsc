@@ -932,14 +932,14 @@ class UDeepSC_M3_withSIC(UDeepSC_M3):
 
         super().__init__(*args, **kwargs)
         # self.channel = Channels()
-        # self.channel = AWGNMultiChannel()
-        self.channel = RayleighFadingMultiChannel(
-                            noise_power_density_dBm,
-                            reference_distance,
-                            reference_path_loss,
-                            path_loss_exponent,
-                            distance,
-                        )
+        self.channel = AWGNMultiChannel()
+        # self.channel = RayleighFadingMultiChannel(
+        #                     noise_power_density_dBm,
+        #                     reference_distance,
+        #                     reference_path_loss,
+        #                     path_loss_exponent,
+        #                     distance,
+        #                 )
 
     def SIC(self, signal: torch.Tensor, user_dim_index: int, power_constraints: torch.FloatTensor, 
             channel_encoders: list[nn.Module], channel_decoders: list[nn.Module], 
@@ -1050,7 +1050,7 @@ class UDeepSC_M3_withSIC(UDeepSC_M3):
             signal = self.channel.interfere(
                 signal=signal, 
                 user_dim_index=user_dim_index, 
-                SNRdb=SNRdb, 
+                SNRdb=None, 
                 channel_gain_var=self.channel_gain_var,
                 channel_gain_tensor=self.channel_gain
             )
@@ -1841,7 +1841,7 @@ class UDeepSCUplinkNOMAwithSIC(nn.Module):
                 x = self.sigmoid_layer(x)
             return x
 
-class UDeepSCUplinkNOMAnoSIC(nn.Module):
+class UDeepSCNOMAnoSIC(nn.Module):
     """
         UDeepSC non-orthogonal version without signal detection
         (signals are superimposed)
@@ -1899,20 +1899,20 @@ class UDeepSCUplinkNOMAnoSIC(nn.Module):
         # self.num_symbols_msa_img = 16
         # self.num_symbols_msa_text = 16
         # self.num_symbols_msa_spe = 16
-        self.num_antennas = 16
+        self.num_symbols_msa = 16
  
         self.textc_encoder_to_channel =     nn.Linear(text_embed_dim, self.num_symbols_textc)
         self.imgc_encoder_to_channel =      nn.Linear(img_embed_dim, self.num_symbols_imgc)
         self.textr_encoder_to_channel =     nn.Linear(text_embed_dim, self.num_symbols_textr)
         self.imgr_encoder_to_channel =      nn.Linear(img_embed_dim, self.num_symbols_imgr)
-        self.vqa_img_encoder_to_channel =   nn.Linear(img_embed_dim, self.num_antennas)
-        self.vqa_text_encoder_to_channel =  nn.Linear(text_embed_dim, self.num_antennas)
-        self.msa_img_encoder_to_channel =   nn.Linear(img_embed_dim, self.num_antennas)
-        self.msa_text_encoder_to_channel =  nn.Linear(text_embed_dim, self.num_antennas)
-        self.msa_spe_encoder_to_channel =   nn.Linear(speech_embed_dim, self.num_antennas)
-        self.ave_img_encoder_to_channel =   nn.Linear(img_embed_dim, self.num_antennas)
-        self.ave_spe_encoder_to_channel =   nn.Linear(speech_embed_dim, self.num_antennas)
-        self.ave_img2_encoder_to_channel =   nn.Linear(img_embed_dim, self.num_antennas)
+        self.vqa_img_encoder_to_channel =   nn.Linear(img_embed_dim, self.num_symbols_msa)
+        self.vqa_text_encoder_to_channel =  nn.Linear(text_embed_dim, self.num_symbols_msa)
+        self.msa_img_encoder_to_channel =   nn.Linear(img_embed_dim, self.num_symbols_msa)
+        self.msa_text_encoder_to_channel =  nn.Linear(text_embed_dim, self.num_symbols_msa)
+        self.msa_spe_encoder_to_channel =   nn.Linear(speech_embed_dim, self.num_symbols_msa)
+        self.ave_img_encoder_to_channel =   nn.Linear(img_embed_dim, self.num_symbols_msa)
+        self.ave_spe_encoder_to_channel =   nn.Linear(speech_embed_dim, self.num_symbols_msa)
+        self.ave_img2_encoder_to_channel =   nn.Linear(img_embed_dim, self.num_symbols_msa)
         
         
         self.textc_channel_to_decoder  =    nn.Linear(self.num_symbols_textc, decoder_embed_dim)
@@ -1920,11 +1920,11 @@ class UDeepSCUplinkNOMAnoSIC(nn.Module):
         self.textr_channel_to_decoder  =    nn.Linear(self.num_symbols_textr, decoder_embed_dim)
         self.imgr_channel_to_decoder =      nn.Linear(self.num_symbols_imgr, decoder_embed_dim)
 
-        self.vqa_channel_to_decoder = nn.Linear(self.num_antennas, decoder_embed_dim)
+        self.vqa_channel_to_decoder = nn.Linear(self.num_symbols_msa, decoder_embed_dim)
 
-        self.msa_channel_to_decoder = nn.Linear(self.num_antennas, decoder_embed_dim)
+        self.msa_channel_to_decoder = nn.Linear(self.num_symbols_msa, decoder_embed_dim)
 
-        self.ave_channel_to_decoder = nn.Linear(self.num_antennas, decoder_embed_dim)
+        self.ave_channel_to_decoder = nn.Linear(self.num_symbols_msa, decoder_embed_dim)
         
 
         self.task_dict = nn.ModuleDict()
@@ -1993,20 +1993,23 @@ class UDeepSCUplinkNOMAnoSIC(nn.Module):
             signal = self.channel.interfere(signal, SNRdb.item(), user_dim_index)
 
         elif isinstance(self.channel, RayleighFadingMultiChannel):
+            power_constraint = torch.tensor(power_constraint)
             signal = tensor_real2complex(signal, 'concat')
-            power_constraint = self.channel.get_signal_power_constraint(signal, SNRdb, user_dim_index, self.channel_gain_var) # (n_tx, )
+            # power_constraint = self.channel.get_signal_power_constraint(signal, SNRdb, user_dim_index, self.channel_gain_var) # (n_tx, )
+
             signal = power_normlize_stack(signal, power_constraint)
 
-            self.channel_gain = self.channel.get_channel_gain().to(signal.device) # (batch_size, n_tx, 1, 1 ,signal length)
             # print(f'{self.channel_gain.shape= }')
             # superimpose and add noise
             signal = self.channel.interfere(
                 signal=signal, 
                 user_dim_index=user_dim_index, 
                 SNRdb=SNRdb, 
+                divide_gain = True,
                 channel_gain_var=self.channel_gain_var,
-                channel_gain_tensor=self.channel_gain
             )
+            # self.channel_gain = self.channel.get_channel_gain().to(signal.device) # (batch_size, n_tx, 1, 1 ,signal length)
+            signal = signal.squeeze(dim=user_dim_index+1)
 
         signal = tensor_complex2real(signal, 'concat')
 
@@ -2430,7 +2433,7 @@ def UDeepSC_NOMA_new_model(pretrained=False, **kwargs):
 
 @register_model
 def UDeepSC_NOMANoSIC_model(pretrained=False, **kwargs):
-    model = UDeepSCUplinkNOMAnoSIC(
+    model = UDeepSCNOMAnoSIC(
         noise_power_density_dBm=-90,    # ref. ISSNOMATrainer's note
         reference_distance=1,
         reference_path_loss=pow(10, -30/10),

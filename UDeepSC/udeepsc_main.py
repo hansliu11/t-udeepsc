@@ -17,7 +17,7 @@ from datasets import build_dataset_train, build_dataset_test, BatchSchedulerSamp
 
 ## 0 -> 2 1 -> 1 2 -> 0 3 -> 3
 # os.environ['CUDA_VISIBLE_DEVICES'] = '1'
-os.environ['WANDB_MODE'] = 'disabled'
+# os.environ['WANDB_MODE'] = 'disabled'
 
 ############################################################
 def wandbConfig_initial(args):
@@ -43,10 +43,13 @@ def main(args):
     ### Configuration
     utils.init_distributed_mode(args)
     device = torch.device(args.device)
+    if args.seed is None:
+        import random
+        args.seed = random.randint(1, 1000000)
     seed_initial(seed=args.seed)
     print(f"seed = {args.seed}")
 
-    scheme = "NOMA"
+    scheme = "noSIC"
     
     ### wanb init
     wandb.init(project="udeepsc", name=f"msa_{scheme}(SNR=12)")
@@ -75,9 +78,9 @@ def main(args):
     # ta_sel = ['vqa', 'textc', 'imgc']
     ta_sel = ['msa']
     n_user = 3
-    # power_constraint = [1.0] * n_user
+    power_constraint = [1.0] * n_user
     # power_constraint = [1.8, 0.18]
-    power_constraint = [0.4, 0.8, 1.8]
+    # power_constraint = [0.4, 0.8, 1.8]
     print(f"Power Constraint: {power_constraint} for {n_user} users")
     
     trainset_group = build_dataset_train(is_train=True, ta_sel=ta_sel, args=args)
@@ -156,6 +159,7 @@ def main(args):
     wandb.watch(model, criterion=criterion_train, log_freq=args.log_interval)
     print(f"Start training for {args.epochs} epochs")
     max_val_acc = 0.0
+    min_val_loss = float('inf')
     start_time = time.time()
     progress_bar = tqdm(range(args.start_epoch, args.epochs), leave=False, dynamic_ncols=True)
     for epoch in progress_bar:
@@ -254,8 +258,12 @@ def main(args):
                 is_val_acc_updated = (val_acc > max_val_acc)
                 max_val_acc = max(val_acc, max_val_acc)
 
-                # if is_val_loss_updated or (epoch + 1) % args.save_freq == 0 or epoch + 1 == args.epochs:
-                if is_val_acc_updated or (epoch + 1) % args.save_freq == 0:
+                # val_loss = test_stats['loss']
+                # is_val_loss_updated = (val_loss < min_val_loss)
+                # min_val_loss = min(min_val_loss, val_loss)
+
+                # if is_val_loss_updated or (epoch + 1) % args.save_freq == 0:
+                if is_val_acc_updated or epoch + 1 == args.epochs:
                     utils.save_model(
                         args=args, epoch=epoch, type_str=scheme,  model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
                         loss_scaler=loss_scaler,  model_ema=None)
