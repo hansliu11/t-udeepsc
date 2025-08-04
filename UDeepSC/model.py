@@ -1783,7 +1783,7 @@ class UDeepSCNOMAnoSIC(nn.Module):
                  img_size=224, patch_size=16, encoder_in_chans=3, encoder_num_classes=0, 
                  img_embed_dim=384, text_embed_dim=384, speech_embed_dim=128, img_encoder_depth=4, 
                  text_encoder_depth=4, speech_encoder_depth=4, encoder_num_heads=12, decoder_num_classes=768, 
-                 decoder_embed_dim=512, decoder_depth=8, decoder_num_heads=8, mlp_ratio=4., 
+                 decoder_embed_dim=512, decoder_depth=8, decoder_num_heads=8, num_symbols=48, mlp_ratio=4., 
                  qkv_bias=False, qk_scale=None, drop_rate=0., attn_drop_rate=0., drop_path_rate=0., 
                  norm_layer=nn.LayerNorm, init_values=0.,use_learnable_pos_emb=False,num_classes=0, 
                  ):
@@ -1825,7 +1825,8 @@ class UDeepSCNOMAnoSIC(nn.Module):
         self.num_symbols_vqa = 16
         # self.num_symbols_msa = 16
         # using 3 times bandwidth compare to OMA (UDeepSC_M3)
-        self.num_symbols_msa = 48 
+        # symbols set: {96, 80, 64, 48, 32, 16, 8}
+        self.num_symbols_msa = num_symbols
         self.num_symbols_ave = 16
  
         self.textc_encoder_to_channel =     nn.Linear(text_embed_dim, self.num_symbols_textc)
@@ -2065,6 +2066,350 @@ class UDeepSCNOMAnoSIC(nn.Module):
         
         return x, x_norm
 
+
+    def forward(self, text=None, img=None, speech=None, img2=None, ta_perform=None, power_constraint:list[float]=[1, 1, 1], test_snr:torch.FloatTensor=torch.FloatTensor([12]), channel_gain_var: list[list[float]] | torch.Tensor = None):
+        """
+            Input:
+                text: text data (tokenized first) for task need text
+                img: image data for task need image
+                speech: audio data for task need speech
+                ta_perform: The task to be eval (execute)
+                power_constraint: The power constraint of each user [text, img, speech]
+            Output:
+                Task result executed by decoder of receiver
+                Different shape for different tasks and data type
+                Ex:
+                    Textr: (batch_size, seq length, vocab size) for vacab size = 34000
+        """
+        n_user = len(power_constraint)
+        
+        if self.training:
+            noise_snr, noise_std = noise_gen(self.training)
+            noise_std = noise_std.cuda()
+        else:
+            noise_std = torch.FloatTensor([1]) * 10**(-test_snr/20) 
+            noise_snr = test_snr
+
+        if isinstance(self.channel, RayleighFadingMultiChannel):
+            self.channel_gain_var = [[1.0]] * n_user if channel_gain_var is None else channel_gain_var
+
+        if text is not None:
+            x_text = self.text_encoder(ta_perform, text, return_dict=False)[0]
+            # x_text = self.LN(x_text)
+            if ta_perform.startswith('textc'):
+                x_text = x_text[:,0,:].unsqueeze(1)
+                x_text = self.textc_encoder_to_channel(x_text)
+            elif ta_perform.startswith('vqa'):
+                x_text = x_text[:,0:3,:]
+                x_text = self.vqa_text_encoder_to_channel(x_text)
+            elif ta_perform.startswith('msa'):
+                x_text = x_text[:,-2:-1,:]
+                x_text = self.msa_text_encoder_to_channel(x_text)
+
+            # x_text, _ = power_norm_batchwise(x_text, power)
+            
+        if img is not None:
+            AVE_batch_size = img.shape[0]
+            if ta_perform.startswith('ave'):
+                img = img.view(img.size(0) * img.size(1), -1, 512) # (batch_size * time_steps, 49, 512)
+
+            x_img = self.img_encoder(img, ta_perform)
+            if ta_perform.startswith('imgc'):
+                power = power_constraint[0]
+                x_img = x_img[:,0,:].unsqueeze(1)
+                x_img = self.imgc_encoder_to_channel(x_img)
+                
+            elif ta_perform.startswith('vqa'):
+                x_img = x_img[:,0:3,:]
+                x_img = self.vqa_img_encoder_to_channel(x_img)
+                
+            elif ta_perform.startswith('msa'):
+                x_img = x_img[:,0,:].unsqueeze(1)
+                x_img = self.msa_img_encoder_to_channel(x_img)
+
+            elif ta_perform.startswith('ave'):
+                power = power_constraint[0]
+                x_img = x_img[:,0,:].unsqueeze(1)
+                x_img = self.ave_img_encoder_to_channel(x_img)
+
+            # x_img, _ = power_norm_batchwise(x_img, power)
+            
+        if speech is not None:
+            if ta_perform.startswith('ave'):
+                speech = speech.view(-1, speech.size(-1)) # (batch_size * time_steps, 128)
+
+            x_spe = self.spe_encoder(speech, ta_perform)
+            if ta_perform.startswith('msa'):
+                x_spe = x_spe[:,0,:].unsqueeze(1)
+                x_spe = self.msa_spe_encoder_to_channel(x_spe)
+            
+            elif ta_perform.startswith('ave'):
+                power = power_constraint[1]
+                x_spe = x_spe[:,0,:].unsqueeze(1)
+                x_spe = self.ave_spe_encoder_to_channel(x_spe)
+            
+            # x_spe, _ = power_norm_batchwise(x_spe, power)
+        
+        if img2 is not None:
+            if ta_perform.startswith('ave'):
+                img2 = img2.view(img2.size(0) * img2.size(1), -1, 512) # (batch_size * time_steps, 49, 512)
+                x_img2 = self.img2_encoder(img2, ta_perform)
+                
+                power = power_constraint[2]
+                x_img2 = x_img2[:,0,:].unsqueeze(1)
+                x_img2 = self.ave_img2_encoder_to_channel(x_img2)
+            
+        if ta_perform.startswith('img'):
+            x_img = x_img.unsqueeze(1)
+            x_img = self.transmit(x_img, 1, noise_snr)
+        elif ta_perform.startswith('text'):
+            x_text = x_text.unsqueeze(1)
+            x_text = self.transmit(x_text, 1, noise_snr)
+        elif ta_perform.startswith('vqa'):
+            x = torch.stack((x_img, x_text), dim=1)
+            x = self.transmit(x, 1, noise_snr, 2)
+        elif ta_perform.startswith('msa'):
+            x = torch.stack((x_text, x_img, x_spe), dim=1)
+            # x = torch.stack((x_text, x_spe), dim=1)
+            # x = x_img.unsqueeze(1)
+            x = self.transmit(x, 1, noise_snr, power_constraint)
+
+        elif ta_perform.startswith('ave'):
+            x = torch.stack((x_img, x_spe), dim=1)
+            # x = torch.stack((x_img, x_spe, x_img2), dim=1)
+            x = self.transmit(x, 1, noise_snr, power_constraint)
+        
+        
+        if ta_perform.startswith('img'):
+            x = x_img
+        elif ta_perform.startswith('text'):
+            x = x_text
+        elif ta_perform.startswith('vqa'):
+            x = self.vqa_channel_to_decoder(x)
+                  
+        elif ta_perform.startswith('msa'):
+            x = self.msa_channel_to_decoder(x)
+
+        elif ta_perform.startswith('ave'):
+            x = self.ave_channel_to_decoder(x)
+
+        batch_size = x.shape[0]
+        if ta_perform.endswith('r'):
+            x = self.decoder(x, x, None, None, None) 
+            x = self.head[ta_perform](x)
+            return x
+        else:
+            query_embed = self.task_dict[ta_perform].weight.unsqueeze(0).repeat(batch_size, 1, 1)
+            x = self.decoder(query_embed, x, None, None, None) 
+            if ta_perform.startswith('textr'): 
+                x = self.head[ta_perform](x)
+            else:
+                x = self.head[ta_perform](x.mean(1))
+                if ta_perform.startswith('ave'):
+                    x = x.view(AVE_batch_size, -1, x.size(-1))
+            if ta_perform.startswith('vqa'):
+                x = self.sigmoid_layer(x)
+            return x
+        
+class UDeepSCNOMAnoSIC_FS(nn.Module):
+    """
+        UDeepSC non-orthogonal version without signal detection
+        (signals are superimposed)
+    """
+    def __init__(self,
+                noise_power_density_dBm,
+                reference_distance,
+                reference_path_loss,
+                path_loss_exponent,
+                distance,
+                 mode='tiny',
+                 img_size=224, patch_size=16, encoder_in_chans=3, encoder_num_classes=0, 
+                 img_embed_dim=384, text_embed_dim=384, speech_embed_dim=128, img_encoder_depth=4, 
+                 text_encoder_depth=4, speech_encoder_depth=4, encoder_num_heads=12, decoder_num_classes=768, 
+                 decoder_embed_dim=512, decoder_depth=8, decoder_num_heads=8, mlp_ratio=4., 
+                 qkv_bias=False, qk_scale=None, drop_rate=0., attn_drop_rate=0., drop_path_rate=0., 
+                 norm_layer=nn.LayerNorm, init_values=0.,use_learnable_pos_emb=False,num_classes=0, code_rate=0.5,
+                 ):
+
+        super().__init__()
+        
+        if mode=='tiny':
+            text_embed_dim = 128
+        elif mode=='small':
+            text_embed_dim = 512
+        else:
+            text_embed_dim = 512
+
+        text_embed_dim = int(text_embed_dim * code_rate)
+        img_embed_dim = int(img_embed_dim * code_rate)
+        speech_embed_dim = int(speech_embed_dim * code_rate)
+        
+        self.img_encoder = ViTEncoder(img_size=img_size, patch_size=patch_size, in_chans=encoder_in_chans, 
+                                num_classes=encoder_num_classes, embed_dim=img_embed_dim,depth=img_encoder_depth,
+                                num_heads=encoder_num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias,drop_rate=drop_rate, 
+                                drop_path_rate=drop_path_rate,norm_layer=norm_layer, init_values=init_values,
+                                use_learnable_pos_emb=use_learnable_pos_emb)
+        
+        bert_ckpt = f"prajjwal1/bert-{mode}"
+        self.text_encoder = BertModel.from_pretrained(bert_ckpt)
+        
+        self.spe_encoder = SPTEncoder(in_chans=encoder_in_chans,num_classes=encoder_num_classes, embed_dim=speech_embed_dim,
+                                depth=speech_encoder_depth,num_heads=encoder_num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias,drop_rate=drop_rate, 
+                                drop_path_rate=drop_path_rate,norm_layer=norm_layer, init_values=init_values,
+                                use_learnable_pos_emb=use_learnable_pos_emb)
+        
+        self.img2_encoder = ViTEncoder(img_size=img_size, patch_size=patch_size, in_chans=encoder_in_chans, 
+                                num_classes=encoder_num_classes, embed_dim=img_embed_dim,depth=img_encoder_depth,
+                                num_heads=encoder_num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias,drop_rate=drop_rate, 
+                                drop_path_rate=drop_path_rate,norm_layer=norm_layer, init_values=init_values,
+                                use_learnable_pos_emb=use_learnable_pos_emb)
+        
+        self.num_symbols_imgc = 16
+        self.num_symbols_imgr = 16
+        self.num_symbols_textc = 4
+        self.num_symbols_textr = 24
+
+        self.num_symbols_vqa = 16
+        # self.num_symbols_msa = 16
+        # using 3 times bandwidth compare to OMA (UDeepSC_M3)
+        # symbols set: {48, 32, 16, 8, 4, 2}
+        self.num_symbols_msa = 48 
+        self.num_symbols_ave = 16
+ 
+        self.textc_encoder_to_channel =     nn.Linear(text_embed_dim, self.num_symbols_textc)
+        self.imgc_encoder_to_channel =      nn.Linear(img_embed_dim, self.num_symbols_imgc)
+        self.textr_encoder_to_channel =     nn.Linear(text_embed_dim, self.num_symbols_textr)
+        self.imgr_encoder_to_channel =      nn.Linear(img_embed_dim, self.num_symbols_imgr)
+        self.vqa_img_encoder_to_channel =   nn.Linear(img_embed_dim, self.num_symbols_vqa)
+        self.vqa_text_encoder_to_channel =  nn.Linear(text_embed_dim, self.num_symbols_vqa)
+        self.msa_img_encoder_to_channel =   nn.Linear(img_embed_dim, self.num_symbols_msa)
+        self.msa_text_encoder_to_channel =  nn.Linear(text_embed_dim, self.num_symbols_msa)
+        self.msa_spe_encoder_to_channel =   nn.Linear(speech_embed_dim, self.num_symbols_msa)
+        self.ave_img_encoder_to_channel =   nn.Linear(img_embed_dim, self.num_symbols_ave)
+        self.ave_spe_encoder_to_channel =   nn.Linear(speech_embed_dim, self.num_symbols_ave)
+        self.ave_img2_encoder_to_channel =   nn.Linear(img_embed_dim, self.num_symbols_ave)
+        
+        
+        self.textc_channel_to_decoder  =    nn.Linear(self.num_symbols_textc, decoder_embed_dim)
+        self.imgc_channel_to_decoder  =     nn.Linear(self.num_symbols_imgc, decoder_embed_dim)
+        self.textr_channel_to_decoder  =    nn.Linear(self.num_symbols_textr, decoder_embed_dim)
+        self.imgr_channel_to_decoder =      nn.Linear(self.num_symbols_imgr, decoder_embed_dim)
+
+        self.vqa_channel_to_decoder = nn.Linear(self.num_symbols_vqa, decoder_embed_dim)
+
+        self.msa_channel_to_decoder = nn.Linear(self.num_symbols_msa, decoder_embed_dim)
+
+        self.ave_channel_to_decoder = nn.Linear(self.num_symbols_ave, decoder_embed_dim)
+        
+
+        self.task_dict = nn.ModuleDict()
+        self.task_dict['imgc'] = nn.Embedding(25, decoder_embed_dim)
+        self.task_dict['imgr'] = nn.Embedding(64, decoder_embed_dim)
+        self.task_dict['textc'] = nn.Embedding(25, decoder_embed_dim)
+        self.task_dict['vqa'] = nn.Embedding(25, decoder_embed_dim)
+        self.task_dict['msa']  = nn.Embedding(25, decoder_embed_dim)
+        self.task_dict['textr'] = nn.Embedding(66, decoder_embed_dim)
+        self.task_dict['ave'] = nn.Embedding(25, decoder_embed_dim)
+
+        self.head = nn.ModuleDict()
+        self.head['imgc'] = nn.Linear(decoder_embed_dim, IMGC_NUMCLASS)
+        self.head['textc'] = nn.Linear(decoder_embed_dim, TEXTC_NUMCLASS)
+        self.head['textr'] = nn.Linear(decoder_embed_dim, TEXTR_NUMCLASS)
+        self.head['vqa'] = nn.Linear(decoder_embed_dim, VQA_NUMCLASS)
+        self.head['imgr'] = nn.Linear(decoder_embed_dim, IMGR_LENGTH)
+        self.head['msa'] = nn.Linear(decoder_embed_dim, MSA_NUMCLASS)
+        self.head['ave'] = nn.Linear(decoder_embed_dim, AVE_NUMCLASS)
+
+        self.decoder = Decoder(depth=decoder_depth, embed_dim=decoder_embed_dim, 
+                                num_heads=decoder_num_heads, dff=mlp_ratio*decoder_embed_dim, 
+                                drop_rate=drop_rate)
+        # self.channel = Channels()
+        self.channel = AWGNMultiChannel()
+        # self.channel = RayleighFadingMultiChannel(
+        #                     noise_power_density_dBm,
+        #                     reference_distance,
+        #                     reference_path_loss,
+        #                     path_loss_exponent,
+        #                     distance,
+        #                 )
+        self.sigmoid_layer = nn.Sigmoid()
+        
+    def _init_weights(self, m):
+        if isinstance(m, nn.Linear):
+            nn.init.xavier_uniform_(m.weight)
+            if isinstance(m, nn.Linear) and m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.LayerNorm):
+            nn.init.constant_(m.bias, 0)
+            nn.init.constant_(m.weight, 1.0)
+
+    def get_num_layers(self):
+        return len(self.blocks)
+
+    def mask_gen(self, signal, rho_ratio, device):
+        """
+            Generate a mask to select 
+            Args:
+                batch_size: the batch size of the input
+                signal: a complex tensor representing the signals from multiple transmitter (user).
+                        with shape (batch_size, *dim, symbol_dim):
+                        - symbol_dim: for signal symbols
+                rho_ratio: the ratio of the number of symbols to the number of features
+        """
+        flat_signal = signal.view(signal.shape[0], -1)
+        batch_size, num_features = flat_signal.shape[0], flat_signal.shape[1]
+
+        return torch.ones((batch_size, rho_ratio * num_features), dtype=torch.bool, device=device)
+    
+    def transmit(self, signal: torch.Tensor, user_dim_index: int, SNRdb: torch.FloatTensor, power_constraint: list[float]):
+        """
+            Args:
+                signal: a complex tensor representing the signals from multiple transmitter (user).
+                        with shape (batch_size, user_dim, *dim, symbol_dim):
+                        - user_dim: for users, indexed by user_dim_index
+                        - symbol_dim: for signal symbols
+            Return:
+                the signal with interference and superposition for the receiver
+                will have dimension (batch_size, user_dim, *dim, symbol_dim)
+        """
+        # print(f"Transmitted Signal Dim = {signal.shape}")
+
+        if isinstance(self.channel, AWGNMultiChannel):
+            power_constraint = torch.tensor(power_constraint)
+            signal = power_normlize_stack(signal, power_constraint)
+            signal = tensor_real2complex(signal, 'concat') #(batch_size, 1, 8)
+            
+            # superimpose and add noise
+            signal = self.channel.interfere(signal, SNRdb.item(), user_dim_index)
+
+        elif isinstance(self.channel, RayleighFadingMultiChannel):
+            power_constraint = torch.tensor(power_constraint)
+            signal = tensor_real2complex(signal, 'concat')
+            # power_constraint = self.channel.get_signal_power_constraint(signal, SNRdb, user_dim_index, self.channel_gain_var) # (n_tx, )
+
+            signal = power_normlize_stack(signal, power_constraint)
+
+            # superimpose and add noise
+            signal = self.channel.interfere(
+                signal=signal, 
+                user_dim_index=user_dim_index, 
+                SNRdb=SNRdb, 
+                divide_gain = True,
+                channel_gain_var=self.channel_gain_var,
+                # channel_gain_var=torch.tensor([[2.0], [0.5], [0.05]])
+            )
+            self.channel_gain = self.channel.get_channel_gain().to(signal.device) # (batch_size, n_tx, 1, 1 ,signal length)
+            # print(f'{self.channel_gain=}')
+            signal = signal.squeeze(dim=user_dim_index)
+            # print(f"{signal.shape=}")
+
+        signal = tensor_complex2real(signal, 'concat')
+
+        return signal
+
+    @torch.jit.ignore
+    def no_weight_decay(self):
+        return {'pos_embed', 'cls_token', 'mask_token'}
 
     def forward(self, text=None, img=None, speech=None, img2=None, ta_perform=None, power_constraint:list[float]=[1, 1, 1], test_snr:torch.FloatTensor=torch.FloatTensor([12]), channel_gain_var: list[list[float]] | torch.Tensor = None):
         """

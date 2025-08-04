@@ -61,7 +61,7 @@ def get_args():
                         help='path where to save, empty for no saving')
     parser.add_argument('--device', default='cuda',
                         help='device to use for training / testing')
-    parser.add_argument('--seed', default=1000, type=int)
+    parser.add_argument('--seed', default=None, type=int)
     parser.add_argument('--resume', default='', help='resume from checkpoint')
     parser.add_argument('--auto_resume', action='store_true')
     parser.set_defaults(auto_resume=False)
@@ -102,5 +102,8 @@ def get_args():
                         help="The GPU used. Input integer list like \"0\" or \"0,1,2\". Default \"0\".",
                         type=str,
                         default="0")
+    parser.add_argument('--dist', help="The distance of each user for NOMA setting. Input integer list like \"30\" or \"33,83,133\". Default \"33,83,133\".", type=str, default="33,83,133")
+
+    parser.add_argument('--num_symbols', default=16, type=int, help='Number of symbols to be transmitted (bandwidth)')
 
     return parser.parse_args()

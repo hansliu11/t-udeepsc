@@ -47,7 +47,7 @@ def sel_criterion_train(args, ta_sel, device):
             print("criterion for %s classification = %s" % (args.ta_perform,str(criterion)))
         elif ta.startswith('msa'):
             criterion = torch.nn.MSELoss().to(device)
-            print("criterion for %s Reconstruction = %s" % (args.ta_perform,str(criterion)))
+            print("criterion for %s classification = %s" % (args.ta_perform,str(criterion)))
         elif ta.startswith('ave'):
             criterion = torch.nn.MultiLabelSoftMarginLoss().to(device)
             print("criterion for %s classification = %s" % (args.ta_perform,str(criterion)))
@@ -77,7 +77,7 @@ def sel_criterion_test(args,device):
         print("criterion for %s classification = %s" % (args.ta_perform,str(criterion)))
     elif args.ta_perform.startswith('msa'):
         criterion = torch.nn.MSELoss().to(device)
-        print("criterion for %s Reconstruction = %s" % (args.ta_perform,str(criterion)))
+        print("criterion for %s classification = %s" % (args.ta_perform,str(criterion)))
     elif args.ta_perform.startswith('ave'):
         criterion = torch.nn.MultiLabelSoftMarginLoss().to(device)
         print("criterion for %s classification = %s" % (args.ta_perform,str(criterion)))
@@ -93,6 +93,8 @@ def get_model(args):
         pretrained=False,
         drop_path_rate=args.drop_path,
         drop_block_rate=None,
+        # distance=args.dist
+        num_symbols=args.num_symbols * 2,
     )
  
      
@@ -438,8 +440,8 @@ def path_exists_make(path):
         os.makedirs(path)
 
 
-def save_model(args, epoch, model, model_without_ddp, optimizer, loss_scaler, model_ema=None):
-    output_dir = Path(args.output_dir+'/ckpt_'+args.ta_perform)
+def save_model(args, epoch, type_str: str, model, model_without_ddp, optimizer, loss_scaler, model_ema=None):
+    output_dir = Path(args.output_dir +'/' + type_str + '_' +args.ta_perform)
     path_exists_make(output_dir)
     epoch_name = str(epoch)
     if loss_scaler is not None:
@@ -779,6 +781,22 @@ def compute_acc_AVE(labels, x_labels, nb_batch):
     #     target_names.append("class" + str(i))
 
     return accuracy_score(real_labels, pre_labels)
+
+def calc_cca_loss(H1: torch.Tensor, H2: torch.Tensor, eps: float = 1e-5) -> torch.Tensor:
+    H1 -= H1.mean(dim=0)
+    H2 -= H2.mean(dim=0)
+
+    Sigma12 = H1.T @ H2 / (H1.size(0) - 1)
+    Sigma11 = H1.T @ H1 / (H1.size(0) - 1) + eps * torch.eye(H1.size(1), device=H1.device)
+    Sigma22 = H2.T @ H2 / (H1.size(0) - 1) + eps * torch.eye(H2.size(1), device=H2.device)
+
+    inv11 = torch.linalg.inv(Sigma11)
+    inv22 = torch.linalg.inv(Sigma22)
+
+    T = inv11 @ Sigma12 @ inv22 @ Sigma12.T
+    eigvals = torch.linalg.eigvalsh(T)
+    corr = torch.sum(torch.sqrt(torch.clamp(eigvals, min=0)))
+    return -corr
 
     
 import torch.optim.lr_scheduler as lr_scheduler
